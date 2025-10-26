@@ -1,0 +1,240 @@
+/* ==========================================================================
+   ROSSUMXML Theme - Global Color Palette
+   Replicated from Dwys97/ROSSUMXML project for consistent UX
+   ========================================================================== */
+
+:root {
+    /* Background Colors */
+    --bg-primary: #0d1b2a;
+    --bg-secondary: #1b263b;
+    --bg-card: rgba(30, 42, 58, 0.7);
+    --bg-card-light: rgba(255, 255, 255, 0.03);
+    --bg-card-elevated: rgba(255, 255, 255, 0.05);
+    --bg-card-interactive: rgba(255, 255, 255, 0.08);
+    --bg-hover: rgba(255, 255, 255, 0.1);
+    --bg-field: rgba(255, 255, 255, 0.05);
+
+    /* Text Colors */
+    --text-primary: #ffffff;
+    --text-secondary: #e0e1dd;
+    --text-muted: #a5a9b5;
+    --text-gray: #6c757d;
+
+    /* Accent Colors */
+    --accent-blue: #1d72f3;
+    --accent-blue-light: rgba(29, 114, 243, 0.2);
+    --accent-blue-hover: rgba(29, 114, 243, 0.3);
+    --accent-blue-border: rgba(29, 114, 243, 0.3);
+    
+    --accent-green: #34c759;
+    --accent-green-light: rgba(52, 199, 89, 0.15);
+    
+    --accent-purple: #8b5cf6;
+    --accent-teal: #38f9d7;
+    
+    /* Status Colors */
+    --success: #4CAF50;
+    --success-bg: rgba(76, 175, 80, 0.2);
+    --success-border: rgba(76, 175, 80, 0.3);
+    
+    --error: #ff3b30;
+    --error-bg: rgba(255, 59, 48, 0.15);
+    --error-border: rgba(255, 59, 48, 0.3);
+    
+    --warning: #ff9f0a;
+    --warning-bg: rgba(255, 159, 10, 0.15);
+    --warning-border: rgba(255, 159, 10, 0.3);
+    
+    --info: #1d72f3;
+    --info-bg: rgba(29, 114, 243, 0.15);
+    --info-border: rgba(29, 114, 243, 0.3);
+
+    /* Borders */
+    --border-default: rgba(255, 255, 255, 0.1);
+    --border-light: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.15);
+    --border-blue: rgba(29, 114, 243, 0.4);
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.2);
+    --shadow-lg: 0 6px 24px rgba(0, 0, 0, 0.3);
+    --shadow-blue: 0 4px 16px rgba(29, 114, 243, 0.2);
+
+    /* Glassmorphism */
+    --glass-backdrop: blur(20px);
+    --glass-backdrop-strong: blur(15px);
+}
+
+/* ==========================================================================
+   Base Glassmorphic Card Styles
+   ========================================================================== */
+.glass-card {
+    background: var(--bg-card-light);
+    backdrop-filter: var(--glass-backdrop);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    padding: 25px;
+    box-shadow: var(--shadow-md);
+    transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+    background: var(--bg-card-elevated);
+    box-shadow: var(--shadow-lg);
+}
+
+.glass-card-elevated {
+    background: var(--bg-card-elevated);
+    backdrop-filter: var(--glass-backdrop);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow-md);
+}
+
+/* ==========================================================================
+   Button Styles
+   ========================================================================== */
+.btn-primary {
+    padding: 10px 20px;
+    background: var(--accent-blue-light);
+    color: var(--text-primary);
+    border: 1px solid var(--accent-blue-border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow-blue);
+}
+
+.btn-primary:hover {
+    background: var(--accent-blue-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(29, 114, 243, 0.3);
+}
+
+.btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-success {
+    padding: 10px 20px;
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid var(--success-border);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-success:hover {
+    background: rgba(76, 175, 80, 0.3);
+    transform: translateY(-2px);
+}
+
+/* ==========================================================================
+   Form Input Styles
+   ========================================================================== */
+.input-field {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-field);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+}
+
+.input-field:focus {
+    outline: none;
+    border-color: rgba(29, 114, 243, 0.6);
+    background: var(--bg-card-interactive);
+    box-shadow: 0 0 0 3px rgba(29, 114, 243, 0.1);
+}
+
+.input-label {
+    display: block;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    font-size: 0.9rem;
+}
+
+/* ==========================================================================
+   Badge Styles
+   ========================================================================== */
+.badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid var(--success-border);
+}
+
+.badge-error {
+    background: var(--error-bg);
+    color: var(--error);
+    border: 1px solid var(--error-border);
+}
+
+.badge-warning {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border: 1px solid var(--warning-border);
+}
+
+.badge-info {
+    background: var(--info-bg);
+    color: var(--info);
+    border: 1px solid var(--info-border);
+}
+
+.badge-blue {
+    background: var(--accent-blue-light);
+    color: var(--accent-blue);
+    border: 1px solid var(--accent-blue-border);
+}
+
+/* ==========================================================================
+   Utility Classes
+   ========================================================================== */
+.text-primary {
+    color: var(--text-primary);
+}
+
+.text-secondary {
+    color: var(--text-secondary);
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+.text-center {
+    text-align: center;
+}
+
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+.mb-4 { margin-bottom: 2rem; }
+
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mt-4 { margin-top: 2rem; }

@@ -1,0 +1,334 @@
+/* AnnotationCanvas.css - ROSSUMXML Theme */
+
+.annotation-canvas {
+  width: 100%;
+  margin-top: 20px;
+}
+
+/* Dual-Pane Layout */
+.canvas-layout {
+  display: grid;
+  grid-template-columns: 350px 1fr;
+  gap: 20px;
+  min-height: 600px;
+  align-items: start;
+}
+
+/* Pane Headers */
+.pane-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.pane-header h3 {
+  font-size: 1.2rem;
+  color: var(--text-primary);
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Left Pane: Fields List */
+.fields-pane {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.field-count {
+  font-size: 0.85rem;
+}
+
+.fields-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* Custom scrollbar */
+.fields-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fields-list::-webkit-scrollbar-track {
+  background: var(--bg-field);
+  border-radius: 3px;
+}
+
+.fields-list::-webkit-scrollbar-thumb {
+  background: var(--accent-blue);
+  border-radius: 3px;
+}
+
+.fields-list::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-blue-hover);
+}
+
+/* Field Item */
+.field-item {
+  padding: 14px;
+  background: var(--bg-field);
+  border: 1px solid var(--border-default);
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.field-item:hover {
+  background: var(--bg-card-interactive);
+  border-left-color: var(--accent-blue);
+  transform: translateX(4px);
+}
+
+.field-item.selected {
+  background: var(--accent-blue-light);
+  border-left-color: var(--accent-blue);
+  border-color: var(--accent-blue-border);
+  box-shadow: 0 0 0 3px rgba(29, 114, 243, 0.1);
+}
+
+.field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.field-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.confidence-badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+.badge-high {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.badge-medium {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.badge-low {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error-border);
+}
+
+.field-value {
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.field-meta {
+  font-size: 0.75rem;
+}
+
+/* Empty State */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+/* Extracted Text Section */
+.extracted-text-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-default);
+}
+
+.extracted-text-section h4 {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+
+.extracted-text {
+  padding: 12px;
+  background: var(--bg-field);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Monaco', 'Courier New', monospace;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Right Pane: Document Viewer */
+.document-pane {
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Page Controls */
+.page-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-page {
+  padding: 6px 12px;
+  background: var(--accent-blue-light);
+  color: var(--text-primary);
+  border: 1px solid var(--accent-blue-border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-page:hover:not(:disabled) {
+  background: var(--accent-blue-hover);
+  transform: translateY(-1px);
+}
+
+.btn-page:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.page-info {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Document Viewer Container */
+.document-viewer {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 20px;
+  background: var(--bg-field);
+  border-radius: 8px;
+  overflow: auto;
+  position: relative;
+}
+
+/* PDF Container */
+.pdf-container {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.page-wrapper {
+  position: relative;
+  box-shadow: var(--shadow-lg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Image Container */
+.image-container {
+  position: relative;
+  max-width: 100%;
+}
+
+.image-container img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  box-shadow: var(--shadow-lg);
+  border-radius: 4px;
+}
+
+/* Annotation Overlay */
+.annotation-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: all;
+}
+
+/* Loading and Error States */
+.loading-message,
+.error-message {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+
+.error-message {
+  color: var(--error);
+}
+
+/* Responsive Layout */
+@media (max-width: 1024px) {
+  .canvas-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .fields-pane {
+    position: relative;
+    top: 0;
+    max-height: 400px;
+  }
+
+  .document-pane {
+    min-height: 500px;
+  }
+}
+
+@media (max-width: 768px) {
+  .pane-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-controls {
+    flex-wrap: wrap;
+    font-size: 0.8rem;
+  }
+
+  .btn-page {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+
+  .field-item {
+    padding: 12px;
+  }
+}
+
+/* React-PDF Overrides for Dark Theme */
+.react-pdf__Page__canvas {
+  max-width: 100%;
+  height: auto !important;
+}
+
+.react-pdf__Page__textContent {
+  color: transparent;
+}

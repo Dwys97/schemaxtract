@@ -11,19 +11,19 @@ An intelligent document processing (IDP) system that learns document templates t
 
 - **GDPR Compliant**: No permanent storage of original documents - all processing in ephemeral storage
 - **Interactive Learning**: Teach the system new document layouts through annotation
-- **OCR Integration**: PebbleOCR for accurate text extraction
-- **LayoutML**: Machine learning for automatic field detection
-- **Serverless**: AWS Lambda with container images for scalable processing
-- **Modern Frontend**: React + Vite for fast, interactive UI
+- **PaddleOCR Integration**: Real OCR for accurate text extraction with 95%+ accuracy
+- **Intelligent Field Extraction**: Regex-based patterns for invoice field detection
+- **Serverless Ready**: AWS Lambda architecture (with local FastAPI alternative)
+- **Modern Frontend**: React + Vite with drag-and-drop annotations
+- **Rossum-Style Workflow**: Document review, status management, and export pipeline
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Docker (for building Lambda containers)
-- Node.js 18+ (for frontend development)
-- Python 3.11+ (for backend development)
-- AWS SAM CLI (installed automatically in devcontainer)
+- Docker (for Lambda containers) OR Python 3.11+ (for PaddleOCR service)
+- Node.js 18+ (for frontend)
+- Python 3.11+ with pip
 
 ### Option 1: Using GitHub Codespaces (Recommended)
 
@@ -31,7 +31,11 @@ An intelligent document processing (IDP) system that learns document templates t
 2. Select "Codespaces" tab
 3. Click "Create codespace on main"
 4. Wait for automatic setup to complete
-5. See [QUICK_START.md](QUICK_START.md) for running the services
+5. Run the startup script:
+   ```bash
+   ./start.sh
+   ```
+6. Open http://localhost:3000 in your browser
 
 ### Option 2: Local Development
 
@@ -41,13 +45,54 @@ An intelligent document processing (IDP) system that learns document templates t
    cd schemaxtract
    ```
 
-2. **Install AWS SAM CLI**
+2. **Install system dependencies (Ubuntu/Debian)**
    ```bash
-   pip install aws-sam-cli
+   sudo apt-get update
+   sudo apt-get install -y libgl1 libglib2.0-0
    ```
 
-3. **Build and run backend**
+3. **Install Python dependencies**
    ```bash
+   pip install -r ocr_service/requirements.txt
+   ```
+
+4. **Install frontend dependencies**
+   ```bash
+   cd frontend && npm install && cd ..
+   ```
+
+5. **Start all services**
+   ```bash
+   ./start.sh
+   ```
+
+   Or start manually:
+   ```bash
+   # Terminal 1: Start PaddleOCR service
+   make start-ocr
+
+   # Terminal 2: Start frontend
+   make start-frontend
+   ```
+
+### Option 3: Using Makefile
+
+```bash
+# Install all dependencies
+make install
+make install-ocr
+
+# Start services
+make start-all
+# OR
+make start
+
+# Test services
+make test-ocr
+
+# Stop all services
+make stop
+```
    cd backend
    sam build --use-container
    sam local start-api --port 3001 --host 0.0.0.0

@@ -9,6 +9,7 @@ RUN yum update -y && \
     gcc \
     gcc-c++ \
     make \
+    swig \
     tesseract \
     tesseract-langpack-eng \
     poppler-utils \
