@@ -16,18 +16,61 @@
 
 ## Starting the Services
 
-### Start Backend
+### Option 1: Using VS Code Tasks (Recommended)
+
+1. **Press** `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+2. **Type**: `Tasks: Run Task`
+3. **Select** one of:
+   - `Start Both Services` - Starts backend and frontend together
+   - `Start Backend (SAM Local)` - Backend only
+   - `Start Frontend (Vite)` - Frontend only
+
+**Other useful tasks:**
+- `Build Backend Only` - Just build the Lambda container
+- `Test Backend API` - Quick API test
+- `Stop All Services` - Stop backend and frontend
+
+### Option 2: Using Makefile
+
+```bash
+# See all available commands
+make help
+
+# Install dependencies
+make install
+
+# Start backend only
+make start-backend
+
+# Start frontend only (in another terminal)
+make start-frontend
+
+# Test backend
+make test-backend
+
+# Clean build artifacts
+make clean
+
+# Stop all services
+make stop
+```
+
+### Option 3: Manual Commands
+
+#### Start Backend
 ```bash
 cd /workspaces/schemaxtract/backend
 sam build --use-container
 sam local start-api --port 3001 --host 0.0.0.0
 ```
 
-### Start Frontend
+#### Start Frontend
 ```bash
 cd /workspaces/schemaxtract/frontend
 npm install  # Only needed first time
 npm run dev -- --host 0.0.0.0
+# Or use the shortcut:
+npm start
 ```
 
 ## Testing
