@@ -6,148 +6,58 @@ import logging
 import random
 import re
 from typing import List, Dict, Any
-
-try:
-    from paddleocr import PaddleOCR
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
-    logger = logging.getLogger()
-    logger.warning("PaddleOCR not available, using simulation mode")
+import urllib.request
+import urllib.error
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize PaddleOCR once (expensive operation)
-ocr_engine = None
-if PADDLEOCR_AVAILABLE:
-    try:
-        ocr_engine = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-        logger.info("PaddleOCR initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize PaddleOCR: {e}")
-        PADDLEOCR_AVAILABLE = False
+# PaddleOCR service URL (environment variable or default)
+PADDLEOCR_SERVICE_URL = os.environ.get('PADDLEOCR_SERVICE_URL', 'http://host.docker.internal:3002')
+USE_PADDLEOCR_SERVICE = os.environ.get('USE_PADDLEOCR_SERVICE', 'true').lower() == 'true'
 
 
-def extract_text_with_paddleocr(file_path: str) -> tuple[str, List[Dict]]:
+def call_paddleocr_service(base64_document: str, filename: str) -> Dict[str, Any]:
     """
-    Extract text using PaddleOCR.
+    Call external PaddleOCR FastAPI service.
     
     Args:
-        file_path: Path to the document file
+        base64_document: Base64-encoded document
+        filename: Document filename
         
     Returns:
-        Tuple of (extracted_text, raw_ocr_results)
+        Response from PaddleOCR service
     """
-    if not PADDLEOCR_AVAILABLE or ocr_engine is None:
-        logger.warning("PaddleOCR not available, falling back to simulation")
-        return _simulate_pebble_ocr(file_path), []
-    
-    logger.info(f"Running PaddleOCR on {file_path}")
+    logger.info(f"Calling PaddleOCR service at {PADDLEOCR_SERVICE_URL}")
     
     try:
-        # Run OCR
-        result = ocr_engine.ocr(file_path, cls=True)
+        # Prepare request
+        request_data = json.dumps({
+            'document': base64_document,
+            'filename': filename
+        }).encode('utf-8')
         
-        # Extract text and bounding boxes
-        extracted_lines = []
-        ocr_data = []
+        # Make HTTP request
+        req = urllib.request.Request(
+            f"{PADDLEOCR_SERVICE_URL}/process-document",
+            data=request_data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
         
-        if result and result[0]:
-            for line in result[0]:
-                if len(line) >= 2:
-                    bbox = line[0]  # [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                    text_info = line[1]  # (text, confidence)
-                    
-                    text = text_info[0] if isinstance(text_info, tuple) else text_info
-                    confidence = text_info[1] if isinstance(text_info, tuple) and len(text_info) > 1 else 0.0
-                    
-                    extracted_lines.append(text)
-                    
-                    # Store structured data
-                    ocr_data.append({
-                        'text': text,
-                        'bbox': bbox,
-                        'confidence': confidence
-                    })
-        
-        full_text = '\n'.join(extracted_lines)
-        logger.info(f"PaddleOCR extracted {len(extracted_lines)} lines, {len(full_text)} characters")
-        
-        return full_text, ocr_data
-        
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            logger.info("PaddleOCR service responded successfully")
+            return result
+            
+    except urllib.error.URLError as e:
+        logger.error(f"Failed to connect to PaddleOCR service: {e}")
+        raise Exception(f"PaddleOCR service unavailable: {e}")
     except Exception as e:
-        logger.error(f"PaddleOCR failed: {e}")
-        return _simulate_pebble_ocr(file_path), []
+        logger.error(f"Error calling PaddleOCR service: {e}")
+        raise
 
-
-def extract_invoice_fields(text: str, ocr_data: List[Dict]) -> List[Dict[str, Any]]:
-    """
-    Extract invoice fields from OCR text using regex patterns.
-    
-    Args:
-        text: Full extracted text
-        ocr_data: Raw OCR data with bounding boxes
-        
-    Returns:
-        List of extracted fields with normalized bounding boxes
-    """
-    logger.info("Extracting invoice fields from OCR text")
-    
-    fields = []
-    
-    # Regex patterns for common invoice fields
-    patterns = {
-        'invoice_number': r'(?:invoice\s*(?:number|#|no\.?)\s*[:#]?\s*)([A-Z0-9-]+)',
-        'invoice_date': r'(?:date|invoice\s*date)\s*[:.]?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-        'due_date': r'(?:due\s*date|payment\s*due)\s*[:.]?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-        'total': r'(?:total|amount\s*due)\s*[:.]?\s*\$?\s*([\d,]+\.?\d{0,2})',
-        'subtotal': r'(?:subtotal|sub\s*total)\s*[:.]?\s*\$?\s*([\d,]+\.?\d{0,2})',
-        'tax': r'(?:tax|vat)\s*(?:\([\d.]+%\))?\s*[:.]?\s*\$?\s*([\d,]+\.?\d{0,2})',
-    }
-    
-    # Extract using regex
-    for field_name, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            value = match.group(1).strip()
-            
-            # Find corresponding bbox from OCR data
-            bbox = [100, 100, 300, 140]  # Default bbox
-            confidence = 0.85
-            
-            # Try to find matching text in OCR data
-            for ocr_item in ocr_data:
-                if value.lower() in ocr_item['text'].lower():
-                    # Convert PaddleOCR bbox to normalized coordinates
-                    paddle_bbox = ocr_item['bbox']
-                    if len(paddle_bbox) == 4:
-                        x_coords = [pt[0] for pt in paddle_bbox]
-                        y_coords = [pt[1] for pt in paddle_bbox]
-                        x1, y1 = min(x_coords), min(y_coords)
-                        x2, y2 = max(x_coords), max(y_coords)
-                        
-                        # Normalize to [0-1000] range (assume A4: 595x842 points)
-                        bbox = [
-                            int(x1 * 1000 / 595),
-                            int(y1 * 1000 / 842),
-                            int(x2 * 1000 / 595),
-                            int(y2 * 1000 / 842)
-                        ]
-                    confidence = ocr_item.get('confidence', 0.85)
-                    break
-            
-            fields.append({
-                'field_name': field_name,
-                'value': value,
-                'confidence': confidence,
-                'bbox': bbox,
-                'page': 1
-            })
-    
-    logger.info(f"Extracted {len(fields)} fields")
-    return fields if fields else _simulate_layoutml_inference(text, "")
 
 
 def _simulate_pebble_ocr(file_path: str) -> str:
@@ -303,6 +213,28 @@ def lambda_handler(event, context):
         
         logger.info(f"Received document for processing: {filename} ({mime_type})")
         
+        # Option 1: Use PaddleOCR service (if enabled and available)
+        if USE_PADDLEOCR_SERVICE:
+            try:
+                logger.info("Using external PaddleOCR service")
+                result = call_paddleocr_service(base64_document, filename)
+                
+                return {
+                    'statusCode': 200,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps(result)
+                }
+                
+            except Exception as ocr_service_error:
+                logger.warning(f"PaddleOCR service failed, falling back to simulation: {ocr_service_error}")
+                # Fall through to simulation mode
+        
+        # Option 2: Fallback to simulation mode
+        logger.info("Using simulation mode")
+        
         # Decode Base64 document
         document_binary = base64.b64decode(base64_document)
         
@@ -320,13 +252,13 @@ def lambda_handler(event, context):
         
         logger.info(f"Document written to {temp_file_path} ({len(document_binary)} bytes)")
         
-        # Task H: Extract text with PaddleOCR (or fallback to simulation)
-        extracted_text, ocr_data = extract_text_with_paddleocr(temp_file_path)
-        logger.info(f"OCR extracted {len(extracted_text)} characters")
+        # Simulate OCR extraction
+        extracted_text = _simulate_pebble_ocr(temp_file_path)
+        logger.info(f"Simulated OCR extracted {len(extracted_text)} characters")
         
-        # Task I: Extract invoice fields from OCR results
-        fields = extract_invoice_fields(extracted_text, ocr_data)
-        logger.info(f"Extracted {len(fields)} fields")
+        # Simulate field extraction
+        fields = _simulate_layoutml_inference(extracted_text, temp_file_path)
+        logger.info(f"Simulated extraction of {len(fields)} fields")
         
         # Build successful response with normalized bounding boxes
         response_data = {
