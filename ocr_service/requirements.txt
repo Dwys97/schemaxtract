@@ -1,7 +1,6 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-paddlepaddle==3.0.0b1
-paddleocr==2.9.1
+pytesseract==0.3.10
 Pillow==10.3.0
 python-multipart==0.0.6
 numpy>=1.24.4,<2.0

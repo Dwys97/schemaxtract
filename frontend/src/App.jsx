@@ -91,6 +91,26 @@ function App() {
     }
   };
 
+  // Handle document deletion
+  const handleDeleteDocument = (documentId) => {
+    setDocuments(prev => {
+      const filtered = prev.filter(doc => doc.id !== documentId);
+      // Update localStorage
+      if (filtered.length === 0) {
+        localStorage.removeItem('schemaxtract_documents');
+      } else {
+        localStorage.setItem('schemaxtract_documents', JSON.stringify(filtered));
+      }
+      return filtered;
+    });
+    
+    // Close viewer if deleted document is open
+    if (selectedDocument?.id === documentId) {
+      setSelectedDocument(null);
+      document.body.classList.remove('modal-open');
+    }
+  };
+
   // Show/hide uploader
   const toggleUploader = () => {
     setShowUploader(prev => !prev);
@@ -140,6 +160,7 @@ function App() {
               documents={documents}
               onReviewDocument={handleReviewDocument}
               onStatusChange={handleStatusChange}
+              onDeleteDocument={handleDeleteDocument}
             />
           </div>
         )}

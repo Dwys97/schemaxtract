@@ -8,10 +8,20 @@ import './DocumentList.css';
  * - Status-based filtering (Reviews, Postpone, Rejected, Confirmed, Exports, Deleted)
  * - Table view with Status, Document name, Details, Labels, invoice_id, Issue Date, Due Amount
  * - Review button to open document viewer modal
+ * - Delete button to remove documents
  */
-function DocumentList({ documents, onReviewDocument, onStatusChange }) {
+function DocumentList({ documents, onReviewDocument, onStatusChange, onDeleteDocument }) {
   const [activeFilter, setActiveFilter] = useState('reviews');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Handle document deletion
+  const handleDelete = (doc) => {
+    if (window.confirm(`Are you sure you want to delete "${doc.metadata?.filename || 'this document'}"?`)) {
+      if (onDeleteDocument) {
+        onDeleteDocument(doc.id);
+      }
+    }
+  };
 
   // Status filter counts
   const statusCounts = {
@@ -297,7 +307,15 @@ function DocumentList({ documents, onReviewDocument, onStatusChange }) {
                         Review
                       </button>
                     )}
-                    <button className="more-btn">⋮</button>
+                    <button 
+                      className="delete-btn"
+                      onClick={() => handleDelete(doc)}
+                      title="Delete document"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
                   </td>
                 </tr>
               ))

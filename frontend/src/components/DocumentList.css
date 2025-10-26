@@ -395,19 +395,49 @@
   box-shadow: 0 2px 8px rgba(29, 114, 243, 0.2);
 }
 
+/* More Button */
 .more-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 1.2rem;
+  padding: 8px 12px;
+  background: rgba(29, 114, 243, 0.1);
+  border: 1px solid rgba(29, 114, 243, 0.3);
+  border-radius: 6px;
+  color: var(--primary);
   cursor: pointer;
-  padding: 4px 8px;
-  margin-left: 8px;
-  transition: color 0.2s;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.2s;
 }
 
 .more-btn:hover {
-  color: var(--text-primary);
+  background: rgba(29, 114, 243, 0.2);
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
+
+/* Delete Button */
+.delete-btn {
+  padding: 8px 12px;
+  background: rgba(255, 59, 48, 0.1);
+  border: 1px solid rgba(255, 59, 48, 0.3);
+  border-radius: 6px;
+  color: #ff3b30;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.delete-btn:hover {
+  background: rgba(255, 59, 48, 0.2);
+  border-color: #ff3b30;
+  transform: translateY(-1px);
+}
+
+.delete-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Empty State */
