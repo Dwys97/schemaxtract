@@ -19,7 +19,7 @@ echo ""
 
 # Check if services are already running
 if lsof -Pi :3002 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${YELLOW}⚠️  Port 3002 already in use (PaddleOCR service)${NC}"
+    echo -e "${YELLOW}⚠️  Port 3002 already in use (Tesseract OCR service)${NC}"
     read -p "Kill existing process? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -74,29 +74,29 @@ echo ""
 # Create log directory
 mkdir -p logs
 
-# Start PaddleOCR Service
-echo -e "${BLUE}🚀 Starting PaddleOCR Service (port 3002)...${NC}"
+# Start Tesseract OCR Service
+echo -e "${BLUE}🚀 Starting Tesseract OCR Service (port 3002)...${NC}"
 cd ocr_service
 python3 main.py > ../logs/ocr-service.log 2>&1 &
 OCR_PID=$!
 cd ..
-echo -e "${GREEN}✅ PaddleOCR Service started (PID: $OCR_PID)${NC}"
+echo -e "${GREEN}✅ Tesseract OCR Service started (PID: $OCR_PID)${NC}"
 
-# Wait for PaddleOCR to initialize
-echo -e "${YELLOW}⏳ Waiting for PaddleOCR to initialize (downloading models if needed)...${NC}"
-sleep 5
+# Wait for Tesseract to initialize
+echo -e "${YELLOW}⏳ Waiting for Tesseract OCR to initialize...${NC}"
+sleep 3
 
-# Check if PaddleOCR is responsive
-max_attempts=30
+# Check if Tesseract is responsive
+max_attempts=15
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
     if curl -s http://localhost:3002/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✅ PaddleOCR Service is ready!${NC}"
+        echo -e "${GREEN}✅ Tesseract OCR Service is ready!${NC}"
         break
     fi
     attempt=$((attempt + 1))
     if [ $attempt -eq $max_attempts ]; then
-        echo -e "${RED}❌ PaddleOCR Service failed to start${NC}"
+        echo -e "${RED}❌ Tesseract OCR Service failed to start${NC}"
         echo -e "${YELLOW}Check logs/ocr-service.log for details${NC}"
         exit 1
     fi
@@ -122,11 +122,11 @@ echo -e "${GREEN}║          🎉 All Services Running!         ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}📊 Service Status:${NC}"
-echo -e "  ${GREEN}•${NC} PaddleOCR API:  http://localhost:3002"
+echo -e "  ${GREEN}•${NC} Tesseract OCR:  http://localhost:3002"
 echo -e "  ${GREEN}•${NC} Frontend:       http://localhost:3000"
 echo ""
 echo -e "${BLUE}📝 Logs:${NC}"
-echo -e "  ${YELLOW}•${NC} PaddleOCR:  tail -f logs/ocr-service.log"
+echo -e "  ${YELLOW}•${NC} Tesseract:  tail -f logs/ocr-service.log"
 echo -e "  ${YELLOW}•${NC} Frontend:   tail -f logs/frontend.log"
 echo ""
 echo -e "${BLUE}🛑 To stop all services:${NC}"

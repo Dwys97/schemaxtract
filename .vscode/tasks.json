@@ -33,7 +33,7 @@
       }
     },
     {
-      "label": "Start PaddleOCR Service",
+      "label": "Start Tesseract OCR Service",
       "type": "shell",
       "command": "cd ocr_service && python main.py",
       "isBackground": true,
@@ -136,9 +136,9 @@
       }
     },
     {
-      "label": "Start All Services (PaddleOCR)",
+      "label": "Start All Services (Tesseract)",
       "dependsOn": [
-        "Start PaddleOCR Service",
+        "Start Tesseract OCR Service",
         "Start Frontend (Vite)"
       ],
       "dependsOrder": "parallel",
@@ -163,7 +163,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Test PaddleOCR Service",
+      "label": "Test Tesseract OCR Service",
       "type": "shell",
       "command": "curl http://127.0.0.1:3002/health",
       "presentation": {

@@ -19,8 +19,11 @@ logger.setLevel(logging.INFO)
 DEFAULT_OCR_HOST = os.environ.get('PADDLEOCR_HOST', '172.17.0.1')
 PADDLEOCR_SERVICE_URL = os.environ.get('PADDLEOCR_SERVICE_URL', f'http://{DEFAULT_OCR_HOST}:3002')
 USE_PADDLEOCR_SERVICE = os.environ.get('USE_PADDLEOCR_SERVICE', 'true').lower() == 'true'
+USE_SIMULATION_MODE = os.environ.get('USE_SIMULATION_MODE', 'false').lower() == 'true'
 
-logger.info(f"PaddleOCR service URL: {PADDLEOCR_SERVICE_URL}")
+logger.info(f"OCR Service URL: {PADDLEOCR_SERVICE_URL}")
+logger.info(f"Use OCR Service: {USE_PADDLEOCR_SERVICE}")
+logger.info(f"Force Simulation: {USE_SIMULATION_MODE}")
 
 
 def call_paddleocr_service(base64_document: str, filename: str) -> Dict[str, Any]:
@@ -218,10 +221,15 @@ def lambda_handler(event, context):
         
         logger.info(f"Received document for processing: {filename} ({mime_type})")
         
-        # Option 1: Use PaddleOCR service (if enabled and available)
-        if USE_PADDLEOCR_SERVICE:
+        # Option 1: Force simulation mode if enabled
+        if USE_SIMULATION_MODE:
+            logger.info("Using SIMULATION mode (forced by environment variable)")
+            # Skip to simulation code below
+        
+        # Option 2: Use OCR service (Tesseract/PaddleOCR) if enabled and not forced simulation
+        elif USE_PADDLEOCR_SERVICE:
             try:
-                logger.info("Using external PaddleOCR service")
+                logger.info("Using external OCR service (Tesseract)")
                 result = call_paddleocr_service(base64_document, filename)
                 
                 return {
@@ -234,10 +242,10 @@ def lambda_handler(event, context):
                 }
                 
             except Exception as ocr_service_error:
-                logger.warning(f"PaddleOCR service failed, falling back to simulation: {ocr_service_error}")
+                logger.warning(f"OCR service failed, falling back to simulation: {ocr_service_error}")
                 # Fall through to simulation mode
         
-        # Option 2: Fallback to simulation mode
+        # Option 3: Fallback to simulation mode
         logger.info("Using simulation mode")
         
         # Decode Base64 document

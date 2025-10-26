@@ -14,12 +14,12 @@ install: ## Install all dependencies (backend + frontend)
 	cd frontend && npm install
 	@echo "✅ All dependencies installed!"
 
-install-ocr: ## Install PaddleOCR service dependencies
-	@echo "📦 Installing PaddleOCR service dependencies..."
+install-ocr: ## Install Tesseract OCR service dependencies
+	@echo "📦 Installing Tesseract OCR service dependencies..."
 	pip install -r ocr_service/requirements.txt
 	@echo "📦 Installing system dependencies..."
-	sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
-	@echo "✅ PaddleOCR service dependencies installed!"
+	sudo apt-get update && sudo apt-get install -y tesseract-ocr libtesseract-dev
+	@echo "✅ Tesseract OCR service dependencies installed!"
 
 build-backend: ## Build backend Lambda container
 	@echo "🔨 Building backend..."
@@ -27,13 +27,13 @@ build-backend: ## Build backend Lambda container
 	@echo "✅ Backend built successfully!"
 
 start-backend: ## Start backend (SAM Local API) - DEPRECATED: Use start-ocr instead
-	@echo "⚠️  WARNING: Backend uses simulation mode."
-	@echo "⚠️  Use 'make start-ocr' for real PaddleOCR extraction."
+	@echo "⚠️  WARNING: Backend uses simulation mode by default."
+	@echo "⚠️  Use 'make start-ocr' for real Tesseract OCR extraction."
 	@echo "🚀 Starting backend on http://localhost:3001..."
 	cd backend && sam local start-api --port 3001 --host 0.0.0.0
 
-start-ocr: ## Start PaddleOCR service (recommended)
-	@echo "🚀 Starting PaddleOCR service on http://localhost:3002..."
+start-ocr: ## Start Tesseract OCR service (recommended)
+	@echo "🚀 Starting Tesseract OCR service on http://localhost:3002..."
 	cd ocr_service && python main.py
 
 start-frontend: ## Start frontend (Vite dev server)
@@ -55,13 +55,13 @@ test-backend: ## Test backend API endpoint
 	@echo ""
 	@echo "✅ Backend test complete!"
 
-test-ocr: ## Test PaddleOCR service
-	@echo "🧪 Testing PaddleOCR service..."
+test-ocr: ## Test Tesseract OCR service
+	@echo "🧪 Testing Tesseract OCR service..."
 	@curl http://127.0.0.1:3002/health -s | python3 -m json.tool
 	@echo ""
-	@echo "✅ PaddleOCR service test complete!"
+	@echo "✅ Tesseract OCR service test complete!"
 
-test: test-ocr ## Run all tests (defaults to PaddleOCR)
+test: test-ocr ## Run all tests (defaults to Tesseract OCR)
 
 clean: ## Clean build artifacts
 	@echo "🧹 Cleaning build artifacts..."
