@@ -1,204 +1,162 @@
 import json
 import base64
 import os
+import re
 import tempfile
 import logging
-import random
-import re
 from typing import List, Dict, Any
-import urllib.request
-import urllib.error
+from PIL import Image
+import fitz  # PyMuPDF
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# PaddleOCR service URL (environment variable or default)
-# For SAM Local on Linux/Codespaces, use 172.17.0.1 (Docker host IP)
-# For Mac/Windows, use host.docker.internal
-DEFAULT_OCR_HOST = os.environ.get('PADDLEOCR_HOST', '172.17.0.1')
-PADDLEOCR_SERVICE_URL = os.environ.get('PADDLEOCR_SERVICE_URL', f'http://{DEFAULT_OCR_HOST}:3002')
-USE_PADDLEOCR_SERVICE = os.environ.get('USE_PADDLEOCR_SERVICE', 'true').lower() == 'true'
-USE_SIMULATION_MODE = os.environ.get('USE_SIMULATION_MODE', 'false').lower() == 'true'
+# Global variables for lazy loading models
+_donut_model = None
+_donut_processor = None
 
-logger.info(f"OCR Service URL: {PADDLEOCR_SERVICE_URL}")
-logger.info(f"Use OCR Service: {USE_PADDLEOCR_SERVICE}")
-logger.info(f"Force Simulation: {USE_SIMULATION_MODE}")
+def get_donut_model():
+    """Lazy load Donut model to reduce cold start time."""
+    global _donut_model, _donut_processor
+    
+    if _donut_model is None:
+        logger.info("Loading Donut model...")
+        try:
+            from transformers import DonutProcessor, VisionEncoderDecoderModel
+            
+            # Use pre-trained Donut model for document understanding
+            model_name = "naver-clova-ix/donut-base-finetuned-cord-v2"
+            
+            _donut_processor = DonutProcessor.from_pretrained(model_name)
+            _donut_model = VisionEncoderDecoderModel.from_pretrained(model_name)
+            
+            logger.info("Donut model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load Donut model: {e}")
+            raise
+    
+    return _donut_model, _donut_processor
 
 
-def call_paddleocr_service(base64_document: str, filename: str) -> Dict[str, Any]:
+def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
     """
-    Call external PaddleOCR FastAPI service.
+    Extract invoice/customs fields using Donut model.
     
     Args:
-        base64_document: Base64-encoded document
-        filename: Document filename
+        image_path: Path to image file
         
     Returns:
-        Response from PaddleOCR service
+        Dictionary with extracted fields
     """
-    logger.info(f"Calling PaddleOCR service at {PADDLEOCR_SERVICE_URL}")
+    model, processor = get_donut_model()
     
     try:
-        # Prepare request
-        request_data = json.dumps({
-            'document': base64_document,
-            'filename': filename
-        }).encode('utf-8')
+        # Load image
+        image = Image.open(image_path).convert("RGB")
         
-        # Make HTTP request
-        req = urllib.request.Request(
-            f"{PADDLEOCR_SERVICE_URL}/process-document",
-            data=request_data,
-            headers={'Content-Type': 'application/json'},
-            method='POST'
+        # Prepare image for Donut
+        pixel_values = processor(image, return_tensors="pt").pixel_values
+        
+        # Task prompt for customs invoice/document understanding
+        task_prompt = "<s_cord-v2>"
+        decoder_input_ids = processor.tokenizer(
+            task_prompt,
+            add_special_tokens=False,
+            return_tensors="pt"
+        ).input_ids
+        
+        # Generate predictions
+        outputs = model.generate(
+            pixel_values,
+            decoder_input_ids=decoder_input_ids,
+            max_length=model.decoder.config.max_position_embeddings,
+            early_stopping=True,
+            pad_token_id=processor.tokenizer.pad_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
+            use_cache=True,
+            num_beams=1,
+            bad_words_ids=[[processor.tokenizer.unk_token_id]],
+            return_dict_in_generate=True,
         )
         
-        with urllib.request.urlopen(req, timeout=60) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            logger.info("PaddleOCR service responded successfully")
-            return result
-            
-    except urllib.error.URLError as e:
-        logger.error(f"Failed to connect to PaddleOCR service: {e}")
-        raise Exception(f"PaddleOCR service unavailable: {e}")
+        # Decode predictions
+        sequence = processor.batch_decode(outputs.sequences)[0]
+        sequence = sequence.replace(processor.tokenizer.eos_token, "").replace(processor.tokenizer.pad_token, "")
+        sequence = re.sub(r"<.*?>", "", sequence, count=1).strip()
+        
+        # Convert to JSON
+        result = processor.token2json(sequence)
+        
+        logger.info(f"Donut extracted fields: {list(result.keys())}")
+        return result
+        
     except Exception as e:
-        logger.error(f"Error calling PaddleOCR service: {e}")
+        logger.error(f"Donut extraction failed: {e}")
         raise
 
 
-
-def _simulate_pebble_ocr(file_path: str) -> str:
+def convert_donut_to_standard_format(donut_result: Dict, image_width: int = 1000, image_height: int = 1000) -> List[Dict[str, Any]]:
     """
-    Simulate PebbleOCR extraction (Task H).
-    In production, this would call actual OCR engine.
+    Convert Donut output to standardized field format with bounding boxes.
     
     Args:
-        file_path: Path to the document file
+        donut_result: Raw output from Donut model
+        image_width: Target width for bbox normalization
+        image_height: Target height for bbox normalization
         
     Returns:
-        Simulated extracted text
+        List of standardized field dictionaries
     """
-    logger.info(f"[SIMULATION] Running PebbleOCR on {file_path}")
+    fields = []
     
-    # Simulate OCR text extraction
-    simulated_text = """INVOICE
-Invoice Number: INV-2025-001
-Date: October 26, 2025
-Bill To:
-John Doe
-123 Main Street
-San Francisco, CA 94102
-
-Items:
-1. Professional Services    $1,500.00
-2. Consulting Fee           $2,000.00
-3. Software License         $  500.00
-
-Subtotal:                   $4,000.00
-Tax (10%):                  $  400.00
-Total:                      $4,400.00
-
-Payment Terms: Net 30
-Due Date: November 25, 2025"""
+    # Map Donut fields to standard invoice/customs fields
+    field_mapping = {
+        'menu': 'items',  # CORD dataset uses 'menu' for line items
+        'total': 'total',
+        'subtotal': 'subtotal',
+        'tax': 'tax',
+        'store_name': 'bill_to_name',
+        'store_addr': 'bill_to_address',
+        'date': 'invoice_date',
+        'tid': 'invoice_number',
+    }
     
-    return simulated_text
-
-
-def _simulate_layoutml_inference(text: str, file_path: str) -> List[Dict[str, Any]]:
-    """
-    Simulate LayoutML inference for field extraction (Task I).
-    In production, this would use actual ML model for layout analysis.
-    
-    Returns normalized bounding boxes in [0,0,1000,1000] coordinate system.
-    
-    Args:
-        text: Extracted text from OCR
-        file_path: Path to the document file
-        
-    Returns:
-        List of field dictionaries with normalized bounding boxes
-    """
-    logger.info(f"[SIMULATION] Running LayoutML inference on {file_path}")
-    
-    # Simulate field extraction with normalized coordinates [0,0,1000,1000]
-    fields = [
-        {
-            "field_name": "invoice_number",
-            "value": "INV-2025-001",
-            "confidence": 0.95,
-            "bbox": [150, 80, 400, 120],  # Normalized [x1, y1, x2, y2]
-            "page": 1
-        },
-        {
-            "field_name": "invoice_date",
-            "value": "October 26, 2025",
-            "confidence": 0.92,
-            "bbox": [150, 140, 380, 180],
-            "page": 1
-        },
-        {
-            "field_name": "bill_to_name",
-            "value": "John Doe",
-            "confidence": 0.89,
-            "bbox": [150, 240, 300, 275],
-            "page": 1
-        },
-        {
-            "field_name": "bill_to_address",
-            "value": "123 Main Street, San Francisco, CA 94102",
-            "confidence": 0.88,
-            "bbox": [150, 280, 450, 340],
-            "page": 1
-        },
-        {
-            "field_name": "subtotal",
-            "value": "$4,000.00",
-            "confidence": 0.94,
-            "bbox": [600, 600, 750, 635],
-            "page": 1
-        },
-        {
-            "field_name": "tax",
-            "value": "$400.00",
-            "confidence": 0.93,
-            "bbox": [600, 640, 750, 675],
-            "page": 1
-        },
-        {
-            "field_name": "total",
-            "value": "$4,400.00",
-            "confidence": 0.96,
-            "bbox": [600, 680, 750, 720],
-            "page": 1
-        },
-        {
-            "field_name": "due_date",
-            "value": "November 25, 2025",
-            "confidence": 0.91,
-            "bbox": [150, 800, 380, 840],
-            "page": 1
-        }
-    ]
-    
-    # Add some randomness to confidence scores for realism
-    for field in fields:
-        field["confidence"] = min(0.99, field["confidence"] + random.uniform(-0.05, 0.05))
+    for donut_key, standard_key in field_mapping.items():
+        if donut_key in donut_result:
+            value = donut_result[donut_key]
+            
+            # Handle line items (for customs invoices)
+            if donut_key == 'menu' and isinstance(value, list):
+                for idx, item in enumerate(value):
+                    # Extract item fields
+                    item_fields = {
+                        'field_name': f'{standard_key}_{idx}',
+                        'value': item.get('nm', '') if isinstance(item, dict) else str(item),
+                        'confidence': 0.92,
+                        'bbox': [100, 200 + (idx * 50), 900, 240 + (idx * 50)],  # Simulated line item positions
+                        'page': 1,
+                        'item_data': item if isinstance(item, dict) else {}
+                    }
+                    fields.append(item_fields)
+            else:
+                # Single field
+                fields.append({
+                    'field_name': standard_key,
+                    'value': str(value),
+                    'confidence': 0.94,
+                    'bbox': [150, 100, 400, 140],  # Simulated position
+                    'page': 1
+                })
     
     return fields
 
 
 def lambda_handler(event, context):
     """
-    Lambda handler for processing documents with OCR.
-    Implements strict GDPR compliance with try...finally for guaranteed cleanup.
+    AWS Lambda handler for document processing with Donut.
     
-    Args:
-        event: API Gateway event containing Base64-encoded document
-        context: Lambda context object
-        
-    Returns:
-        API Gateway response with extracted fields and normalized bounding boxes
+    Processes documents (PDF, images) and extracts structured fields using Donut model.
     """
     temp_file_path = None
     
@@ -219,71 +177,86 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'No document provided'})
             }
         
-        logger.info(f"Received document for processing: {filename} ({mime_type})")
-        
-        # Option 1: Force simulation mode if enabled
-        if USE_SIMULATION_MODE:
-            logger.info("Using SIMULATION mode (forced by environment variable)")
-            # Skip to simulation code below
-        
-        # Option 2: Use OCR service (Tesseract/PaddleOCR) if enabled and not forced simulation
-        elif USE_PADDLEOCR_SERVICE:
-            try:
-                logger.info("Using external OCR service (Tesseract)")
-                result = call_paddleocr_service(base64_document, filename)
-                
-                return {
-                    'statusCode': 200,
-                    'headers': {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*'
-                    },
-                    'body': json.dumps(result)
-                }
-                
-            except Exception as ocr_service_error:
-                logger.warning(f"OCR service failed, falling back to simulation: {ocr_service_error}")
-                # Fall through to simulation mode
-        
-        # Option 3: Fallback to simulation mode
-        logger.info("Using simulation mode")
+        logger.info(f"Processing document: {filename} ({mime_type})")
         
         # Decode Base64 document
         document_binary = base64.b64decode(base64_document)
         
-        # Determine file extension from MIME type
+        # Determine file extension
         extension = '.pdf'
         if 'image/png' in mime_type:
             extension = '.png'
         elif 'image/jpeg' in mime_type or 'image/jpg' in mime_type:
             extension = '.jpg'
         
-        # Write to temporary file in /tmp/ (ephemeral storage)
+        # Write to temporary file
         with tempfile.NamedTemporaryFile(delete=False, dir='/tmp', suffix=extension) as temp_file:
             temp_file.write(document_binary)
             temp_file_path = temp_file.name
         
         logger.info(f"Document written to {temp_file_path} ({len(document_binary)} bytes)")
         
-        # Simulate OCR extraction
-        extracted_text = _simulate_pebble_ocr(temp_file_path)
-        logger.info(f"Simulated OCR extracted {len(extracted_text)} characters")
+        # Convert PDF to image if needed
+        if extension == '.pdf':
+            try:
+                logger.info("Converting PDF first page to image...")
+                pdf_doc = fitz.open(temp_file_path)
+                if len(pdf_doc) > 0:
+                    page = pdf_doc[0]
+                    # Use 2x zoom for better quality
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    
+                    # Limit size to prevent memory issues
+                    max_dimension = 2000
+                    if pix.width > max_dimension or pix.height > max_dimension:
+                        scale = max_dimension / max(pix.width, pix.height)
+                        pix = page.get_pixmap(matrix=fitz.Matrix(2 * scale, 2 * scale))
+                    
+                    img_path = temp_file_path.replace('.pdf', '.png')
+                    pix.save(img_path)
+                    pdf_doc.close()
+                    
+                    # Delete PDF, use image
+                    os.unlink(temp_file_path)
+                    temp_file_path = img_path
+                    logger.info(f"PDF converted to image: {pix.width}x{pix.height}")
+                else:
+                    raise ValueError("PDF has no pages")
+            except Exception as pdf_error:
+                logger.error(f"PDF conversion error: {pdf_error}")
+                return {
+                    'statusCode': 400,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    },
+                    'body': json.dumps({'error': f'Failed to process PDF: {str(pdf_error)}'})
+                }
         
-        # Simulate field extraction
-        fields = _simulate_layoutml_inference(extracted_text, temp_file_path)
-        logger.info(f"Simulated extraction of {len(fields)} fields")
+        # Extract fields using Donut
+        donut_result = extract_fields_with_donut(temp_file_path)
         
-        # Build successful response with normalized bounding boxes
+        # Convert to standard format
+        fields = convert_donut_to_standard_format(donut_result)
+        
+        # Extract text from Donut result (for compatibility)
+        extracted_text = json.dumps(donut_result, indent=2)
+        
+        logger.info(f"Extracted {len(fields)} fields using Donut")
+        
+        # Build response
         response_data = {
             'status': 'success',
-            'message': 'Document processed successfully',
+            'message': 'Document processed successfully with Donut',
             'extracted_text': extracted_text,
             'fields': fields,
             'metadata': {
                 'filename': filename,
                 'mime_type': mime_type,
                 'file_size': len(document_binary),
-                'num_fields': len(fields)
+                'num_fields': len(fields),
+                'ocr_engine': 'donut',
+                'model': 'naver-clova-ix/donut-base-finetuned-cord-v2'
             }
         }
         
@@ -297,8 +270,7 @@ def lambda_handler(event, context):
         }
         
     except Exception as e:
-        logger.error(f"Error processing document: {str(e)}", exc_info=True)
-        
+        logger.error(f"Error processing document: {e}", exc_info=True)
         return {
             'statusCode': 500,
             'headers': {
@@ -306,18 +278,31 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'status': 'error',
                 'error': 'Internal server error',
                 'message': str(e)
             })
         }
     
     finally:
-        # GDPR Compliance (Task I): Enhanced cleanup with try...finally
-        # Guarantees file deletion even if exceptions occur
+        # Cleanup temp file
         if temp_file_path and os.path.exists(temp_file_path):
             try:
-                os.remove(temp_file_path)
-                logger.info(f"GDPR: Deleted temporary file {temp_file_path}")
+                os.unlink(temp_file_path)
+                logger.info(f"Cleaned up: {temp_file_path}")
             except Exception as cleanup_error:
-                logger.error(f"GDPR WARNING: Failed to delete temporary file {temp_file_path}: {str(cleanup_error)}")
+                logger.warning(f"Failed to cleanup: {cleanup_error}")
+
+
+# For local testing
+if __name__ == "__main__":
+    # Test event
+    test_event = {
+        'body': json.dumps({
+            'document': 'base64_encoded_document_here',
+            'filename': 'test_invoice.pdf',
+            'mimeType': 'application/pdf'
+        })
+    }
+    
+    result = lambda_handler(test_event, None)
+    print(json.dumps(json.loads(result['body']), indent=2))

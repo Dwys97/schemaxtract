@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Start Backend (SAM Local)",
+      "label": "Start Backend (SAM Local with Donut)",
       "type": "shell",
       "command": "cd backend && sam build --use-container && sam local start-api --port 3001 --host 0.0.0.0",
       "isBackground": true,
@@ -17,37 +17,6 @@
           "activeOnStart": true,
           "beginsPattern": "^Building",
           "endsPattern": "Press CTRL\\+C to quit"
-        }
-      },
-      "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": false,
-        "panel": "dedicated",
-        "showReuseMessage": true,
-        "clear": false,
-        "group": "backend"
-      },
-      "runOptions": {
-        "runOn": "default"
-      }
-    },
-    {
-      "label": "Start Tesseract OCR Service",
-      "type": "shell",
-      "command": "cd ocr_service && python main.py",
-      "isBackground": true,
-      "problemMatcher": {
-        "pattern": {
-          "regexp": "^(.*)$",
-          "file": 1,
-          "location": 2,
-          "message": 3
-        },
-        "background": {
-          "activeOnStart": true,
-          "beginsPattern": "INFO:.*Started server",
-          "endsPattern": "Uvicorn running on"
         }
       },
       "presentation": {
@@ -123,22 +92,9 @@
       "problemMatcher": []
     },
     {
-      "label": "Start Both Services",
+      "label": "Start All Services",
       "dependsOn": [
-        "Start Backend (SAM Local)",
-        "Start Frontend (Vite)"
-      ],
-      "dependsOrder": "parallel",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "Start All Services (Tesseract)",
-      "dependsOn": [
-        "Start Tesseract OCR Service",
+        "Start Backend (SAM Local with Donut)",
         "Start Frontend (Vite)"
       ],
       "dependsOrder": "parallel",
@@ -163,23 +119,9 @@
       "problemMatcher": []
     },
     {
-      "label": "Test Tesseract OCR Service",
-      "type": "shell",
-      "command": "curl http://127.0.0.1:3002/health",
-      "presentation": {
-        "echo": true,
-        "reveal": "always",
-        "focus": true,
-        "panel": "shared",
-        "showReuseMessage": false,
-        "clear": false
-      },
-      "problemMatcher": []
-    },
-    {
       "label": "Stop All Services",
       "type": "shell",
-      "command": "pkill -f 'sam local' && pkill -f 'vite' && pkill -f 'python.*main.py' || echo 'Services stopped'",
+      "command": "pkill -f 'sam local' && pkill -f 'vite' || echo 'Services stopped'",
       "presentation": {
         "echo": true,
         "reveal": "always",

@@ -1,4 +1,4 @@
-.PHONY: help install install-ocr build-backend start-backend start-ocr start-frontend start-all test-backend test-ocr test clean stop
+.PHONY: help install build-backend start-backend start-frontend start-all test-backend clean stop
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -7,47 +7,34 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install all dependencies (backend + frontend)
-	@echo "📦 Installing backend dependencies..."
+	@echo "📦 Installing AWS SAM CLI..."
 	pip install --user aws-sam-cli
-	pip install --user -r backend/requirements.txt
 	@echo "📦 Installing frontend dependencies..."
 	cd frontend && npm install
 	@echo "✅ All dependencies installed!"
 
-install-ocr: ## Install Tesseract OCR service dependencies
-	@echo "📦 Installing Tesseract OCR service dependencies..."
-	pip install -r ocr_service/requirements.txt
-	@echo "📦 Installing system dependencies..."
-	sudo apt-get update && sudo apt-get install -y tesseract-ocr libtesseract-dev
-	@echo "✅ Tesseract OCR service dependencies installed!"
-
-build-backend: ## Build backend Lambda container
-	@echo "🔨 Building backend..."
+build-backend: ## Build backend Lambda container with Donut
+	@echo "🔨 Building backend with Donut model..."
+	@echo "⏳ This may take 5-10 minutes for first build..."
 	cd backend && sam build --use-container
 	@echo "✅ Backend built successfully!"
 
-start-backend: ## Start backend (SAM Local API) - DEPRECATED: Use start-ocr instead
-	@echo "⚠️  WARNING: Backend uses simulation mode by default."
-	@echo "⚠️  Use 'make start-ocr' for real Tesseract OCR extraction."
-	@echo "🚀 Starting backend on http://localhost:3001..."
+start-backend: ## Start backend (SAM Local API with Donut)
+	@echo "🚀 Starting backend with integrated Donut on http://localhost:3001..."
 	cd backend && sam local start-api --port 3001 --host 0.0.0.0
-
-start-ocr: ## Start Tesseract OCR service (recommended)
-	@echo "🚀 Starting Tesseract OCR service on http://localhost:3002..."
-	cd ocr_service && python main.py
 
 start-frontend: ## Start frontend (Vite dev server)
 	@echo "🚀 Starting frontend on http://localhost:3000..."
 	cd frontend && npm run dev -- --host 0.0.0.0
 
 start-all: ## Start all services using start.sh script
-	@echo "🚀 Starting all services..."
+	@echo "🚀 Starting all services (Backend with Donut + Frontend)..."
 	./start.sh
 
 start: start-all ## Alias for start-all
 
 test-backend: ## Test backend API endpoint
-	@echo "🧪 Testing backend..."
+	@echo "🧪 Testing backend with Donut..."
 	@curl -X POST http://127.0.0.1:3001/process-document \
 		-H "Content-Type: application/json" \
 		-d '{"document": "dGVzdA=="}' \
@@ -55,41 +42,27 @@ test-backend: ## Test backend API endpoint
 	@echo ""
 	@echo "✅ Backend test complete!"
 
-test-ocr: ## Test Tesseract OCR service
-	@echo "🧪 Testing Tesseract OCR service..."
-	@curl http://127.0.0.1:3002/health -s | python3 -m json.tool
-	@echo ""
-	@echo "✅ Tesseract OCR service test complete!"
-
-test: test-ocr ## Run all tests (defaults to Tesseract OCR)
+test: test-backend ## Run backend tests
 
 clean: ## Clean build artifacts
 	@echo "🧹 Cleaning build artifacts..."
 	rm -rf backend/.aws-sam
 	rm -rf frontend/dist
 	rm -rf frontend/node_modules/.vite
+	rm -rf logs
 	@echo "✅ Clean complete!"
 
 stop: ## Stop all running services
 	@echo "🛑 Stopping all services..."
-	@pkill -f "sam local" || true
-	@pkill -f "vite" || true
-	@pkill -f "python.*main.py" || true
+	@pkill -f "sam local" || echo "Backend not running"
+	@pkill -f "vite" || echo "Frontend not running"
 	@echo "✅ All services stopped!"
-	rm -rf frontend/.vite
-	@echo "✅ Clean complete!"
 
-stop: ## Stop all running services
-	@echo "🛑 Stopping services..."
-	@pkill -f "sam local" || echo "SAM not running"
-	@pkill -f "vite" || echo "Vite not running"
-	@echo "✅ Services stopped!"
-
-dev: ## Quick start development environment
+dev: ## Quick start development environment  
 	@echo "🚀 Starting development environment..."
 	@echo "This will open 2 processes. Press Ctrl+C to stop both."
 	@trap 'make stop' INT; \
 	make start-backend & \
-	sleep 5 && make start-frontend
+	sleep 10 && make start-frontend
 
 .DEFAULT_GOAL := help

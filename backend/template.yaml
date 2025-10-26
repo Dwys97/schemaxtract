@@ -30,9 +30,7 @@ Resources:
         Variables:
           LOG_LEVEL: INFO
           PYTHONUNBUFFERED: 1
-          USE_PADDLEOCR_SERVICE: 'true'
-          PADDLEOCR_HOST: '172.17.0.1'
-          USE_SIMULATION_MODE: 'true'  # Set to 'false' to use real Tesseract OCR
+          DONUT_MODEL_NAME: 'naver-clova-ix/donut-base-finetuned-cord-v2'
       Events:
         ProcessDocument:
           Type: HttpApi
