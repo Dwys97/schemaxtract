@@ -6,29 +6,38 @@ help: ## Show this help message
 	@echo 'Available targets:'
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install all dependencies (backend + frontend)
+install: ## Install all dependencies (backend + frontend + donut)
 	@echo "📦 Installing AWS SAM CLI..."
 	pip install --user aws-sam-cli
+	@echo "📦 Installing Donut service dependencies..."
+	cd donut_service && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && deactivate
 	@echo "📦 Installing frontend dependencies..."
 	cd frontend && npm install
 	@echo "✅ All dependencies installed!"
 
-build-backend: ## Build backend Lambda container with Donut
-	@echo "🔨 Building backend with Donut model..."
-	@echo "⏳ This may take 5-10 minutes for first build..."
+install-donut: ## Install Donut service dependencies only
+	@echo "📦 Installing Donut service..."
+	cd donut_service && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && deactivate
+
+build-backend: ## Build backend Lambda container (lightweight, no Donut)
+	@echo "🔨 Building backend Lambda..."
 	cd backend && sam build --use-container
 	@echo "✅ Backend built successfully!"
 
-start-backend: ## Start backend (SAM Local API with Donut)
-	@echo "🚀 Starting backend with integrated Donut on http://localhost:3001..."
+start-backend: ## Start backend (SAM Local API)
+	@echo "🚀 Starting backend on http://localhost:3001..."
 	cd backend && sam local start-api --port 3001 --host 0.0.0.0
+
+start-donut: ## Start Donut service
+	@echo "🚀 Starting Donut service on http://localhost:3002..."
+	cd donut_service && source venv/bin/activate && python main.py
 
 start-frontend: ## Start frontend (Vite dev server)
 	@echo "🚀 Starting frontend on http://localhost:3000..."
 	cd frontend && npm run dev -- --host 0.0.0.0
 
 start-all: ## Start all services using start.sh script
-	@echo "🚀 Starting all services (Backend with Donut + Frontend)..."
+	@echo "🚀 Starting all 3 services (Backend + Donut + Frontend)..."
 	./start.sh
 
 start: start-all ## Alias for start-all

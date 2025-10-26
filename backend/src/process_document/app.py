@@ -1,47 +1,24 @@
 import json
 import base64
 import os
-import re
 import tempfile
 import logging
 from typing import List, Dict, Any
 from PIL import Image
-import fitz  # PyMuPDF
+from pdf2image import convert_from_path
+import requests
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Global variables for lazy loading models
-_donut_model = None
-_donut_processor = None
-
-def get_donut_model():
-    """Lazy load Donut model to reduce cold start time."""
-    global _donut_model, _donut_processor
-    
-    if _donut_model is None:
-        logger.info("Loading Donut model...")
-        try:
-            from transformers import DonutProcessor, VisionEncoderDecoderModel
-            
-            # Use pre-trained Donut model for document understanding
-            model_name = "naver-clova-ix/donut-base-finetuned-cord-v2"
-            
-            _donut_processor = DonutProcessor.from_pretrained(model_name)
-            _donut_model = VisionEncoderDecoderModel.from_pretrained(model_name)
-            
-            logger.info("Donut model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load Donut model: {e}")
-            raise
-    
-    return _donut_model, _donut_processor
+# Donut service configuration
+DONUT_SERVICE_URL = os.environ.get('DONUT_SERVICE_URL', 'http://localhost:3002')
 
 
-def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
+def call_donut_service(image_path: str) -> Dict[str, Any]:
     """
-    Extract invoice/customs fields using Donut model.
+    Call external Donut service for field extraction.
     
     Args:
         image_path: Path to image file
@@ -49,75 +26,44 @@ def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
     Returns:
         Dictionary with extracted fields
     """
-    model, processor = get_donut_model()
-    
     try:
-        # Load image
-        image = Image.open(image_path).convert("RGB")
+        # Read image and encode to base64
+        with open(image_path, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
         
-        # Prepare image for Donut
-        pixel_values = processor(image, return_tensors="pt").pixel_values
+        # Determine format
+        ext = os.path.splitext(image_path)[1].lower().lstrip('.')
+        if ext not in ['png', 'jpg', 'jpeg']:
+            ext = 'png'
         
-        # Task prompt for customs invoice/document understanding
-        task_prompt = "<s_cord-v2>"
-        decoder_input_ids = processor.tokenizer(
-            task_prompt,
-            add_special_tokens=False,
-            return_tensors="pt"
-        ).input_ids
-        
-        # Generate predictions
-        outputs = model.generate(
-            pixel_values,
-            decoder_input_ids=decoder_input_ids,
-            max_length=model.decoder.config.max_position_embeddings,
-            early_stopping=True,
-            pad_token_id=processor.tokenizer.pad_token_id,
-            eos_token_id=processor.tokenizer.eos_token_id,
-            use_cache=True,
-            num_beams=1,
-            bad_words_ids=[[processor.tokenizer.unk_token_id]],
-            return_dict_in_generate=True,
+        # Call Donut service
+        logger.info(f"Calling Donut service at {DONUT_SERVICE_URL}/extract")
+        response = requests.post(
+            f"{DONUT_SERVICE_URL}/extract",
+            json={
+                'image': image_data,
+                'format': ext
+            },
+            timeout=60  # Donut inference can take time
         )
         
-        # Decode predictions
-        sequence = processor.batch_decode(outputs.sequences)[0]
-        sequence = sequence.replace(processor.tokenizer.eos_token, "").replace(processor.tokenizer.pad_token, "")
-        sequence = re.sub(r"<.*?>", "", sequence, count=1).strip()
+        if response.status_code != 200:
+            raise Exception(f"Donut service returned {response.status_code}: {response.text}")
         
-        # Convert to JSON
-        result = processor.token2json(sequence)
+        result = response.json()
         
-        logger.info(f"Donut extracted fields: {list(result.keys())}")
+        if result.get('status') != 'success':
+            raise Exception(f"Donut extraction failed: {result.get('error', 'Unknown error')}")
+        
+        logger.info(f"Donut service extracted {len(result.get('fields', []))} fields")
         return result
         
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to connect to Donut service: {e}")
+        raise Exception(f"Donut service unavailable: {e}")
     except Exception as e:
-        logger.error(f"Donut extraction failed: {e}")
+        logger.error(f"Donut service call failed: {e}")
         raise
-
-
-def convert_donut_to_standard_format(donut_result: Dict, image_width: int = 1000, image_height: int = 1000) -> List[Dict[str, Any]]:
-    """
-    Convert Donut output to standardized field format with bounding boxes.
-    
-    Args:
-        donut_result: Raw output from Donut model
-        image_width: Target width for bbox normalization
-        image_height: Target height for bbox normalization
-        
-    Returns:
-        List of standardized field dictionaries
-    """
-    fields = []
-    
-    # Map Donut fields to standard invoice/customs fields
-    field_mapping = {
-        'menu': 'items',  # CORD dataset uses 'menu' for line items
-        'total': 'total',
-        'subtotal': 'subtotal',
-        'tax': 'tax',
-        'store_name': 'bill_to_name',
-        'store_addr': 'bill_to_address',
         'date': 'invoice_date',
         'tid': 'invoice_number',
     }
@@ -200,26 +146,18 @@ def lambda_handler(event, context):
         if extension == '.pdf':
             try:
                 logger.info("Converting PDF first page to image...")
-                pdf_doc = fitz.open(temp_file_path)
-                if len(pdf_doc) > 0:
-                    page = pdf_doc[0]
-                    # Use 2x zoom for better quality
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                    
-                    # Limit size to prevent memory issues
-                    max_dimension = 2000
-                    if pix.width > max_dimension or pix.height > max_dimension:
-                        scale = max_dimension / max(pix.width, pix.height)
-                        pix = page.get_pixmap(matrix=fitz.Matrix(2 * scale, 2 * scale))
-                    
+                # Convert PDF to images using pdf2image (poppler-utils)
+                images = convert_from_path(temp_file_path, first_page=1, last_page=1, dpi=200)
+                
+                if images:
+                    # Save first page as PNG
                     img_path = temp_file_path.replace('.pdf', '.png')
-                    pix.save(img_path)
-                    pdf_doc.close()
+                    images[0].save(img_path, 'PNG')
                     
                     # Delete PDF, use image
                     os.unlink(temp_file_path)
                     temp_file_path = img_path
-                    logger.info(f"PDF converted to image: {pix.width}x{pix.height}")
+                    logger.info(f"PDF converted to image: {images[0].width}x{images[0].height}")
                 else:
                     raise ValueError("PDF has no pages")
             except Exception as pdf_error:
@@ -233,16 +171,18 @@ def lambda_handler(event, context):
                     'body': json.dumps({'error': f'Failed to process PDF: {str(pdf_error)}'})
                 }
         
-        # Extract fields using Donut
-        donut_result = extract_fields_with_donut(temp_file_path)
+        # Call Donut service for field extraction
+        donut_result = call_donut_service(temp_file_path)
         
-        # Convert to standard format
-        fields = convert_donut_to_standard_format(donut_result)
+        # Extract fields and metadata from service response
+        fields = donut_result.get('fields', [])
+        raw_output = donut_result.get('raw_output', {})
+        image_size = donut_result.get('image_size', {})
         
-        # Extract text from Donut result (for compatibility)
-        extracted_text = json.dumps(donut_result, indent=2)
+        # Extract text from raw output (for compatibility)
+        extracted_text = json.dumps(raw_output, indent=2)
         
-        logger.info(f"Extracted {len(fields)} fields using Donut")
+        logger.info(f"Extracted {len(fields)} fields using Donut service")
         
         # Build response
         response_data = {

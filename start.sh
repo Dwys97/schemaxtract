@@ -14,37 +14,25 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}╔═══════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║     SchemaXtract Development Startup     ║${NC}"
-echo -e "${BLUE}║         (Donut Model Integrated)         ║${NC}"
+echo -e "${BLUE}║      (3-Service Architecture: Donut)      ║${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════════╝${NC}"
 echo ""
 
-# Check if frontend port is in use
-if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${YELLOW}⚠️  Port 3000 already in use (Frontend)${NC}"
-    read -p "Kill existing process? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pkill -f "vite" || true
-        sleep 2
-    else
-        echo -e "${RED}Cannot start - port 3000 in use${NC}"
-        exit 1
+# Check if ports are in use
+for port in 3000 3001 3002; do
+    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1 ; then
+        echo -e "${YELLOW}⚠️  Port $port already in use${NC}"
+        read -p "Kill existing process? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            lsof -ti:$port | xargs kill -9 2>/dev/null || true
+            sleep 1
+        else
+            echo -e "${RED}Cannot start - port $port in use${NC}"
+            exit 1
+        fi
     fi
-fi
-
-# Check if backend port is in use
-if lsof -Pi :3001 -sTCP:LISTEN -t >/dev/null 2>&1 ; then
-    echo -e "${YELLOW}⚠️  Port 3001 already in use (Backend)${NC}"
-    read -p "Kill existing process? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pkill -f "sam local" || true
-        sleep 2
-    else
-        echo -e "${RED}Cannot start - port 3001 in use${NC}"
-        exit 1
-    fi
-fi
+done
 
 # Check dependencies
 echo -e "${BLUE}🔍 Checking dependencies...${NC}"

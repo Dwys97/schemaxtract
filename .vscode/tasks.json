@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Start Backend (SAM Local with Donut)",
+      "label": "Start Backend (SAM Local)",
       "type": "shell",
       "command": "cd backend && sam build --use-container && sam local start-api --port 3001 --host 0.0.0.0",
       "isBackground": true,
@@ -30,6 +30,34 @@
       },
       "runOptions": {
         "runOn": "default"
+      }
+    },
+    {
+      "label": "Start Donut Service",
+      "type": "shell",
+      "command": "cd donut_service && ([ -d venv ] || python3 -m venv venv) && source venv/bin/activate && pip install -q -r requirements.txt && python main.py",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^(.*)$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting Donut service",
+          "endsPattern": "Running on"
+        }
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated",
+        "showReuseMessage": true,
+        "clear": false,
+        "group": "donut"
       }
     },
     {
@@ -94,7 +122,8 @@
     {
       "label": "Start All Services",
       "dependsOn": [
-        "Start Backend (SAM Local with Donut)",
+        "Start Backend (SAM Local)",
+        "Start Donut Service",
         "Start Frontend (Vite)"
       ],
       "dependsOrder": "parallel",
