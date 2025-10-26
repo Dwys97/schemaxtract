@@ -14,8 +14,13 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # PaddleOCR service URL (environment variable or default)
-PADDLEOCR_SERVICE_URL = os.environ.get('PADDLEOCR_SERVICE_URL', 'http://host.docker.internal:3002')
+# For SAM Local on Linux/Codespaces, use 172.17.0.1 (Docker host IP)
+# For Mac/Windows, use host.docker.internal
+DEFAULT_OCR_HOST = os.environ.get('PADDLEOCR_HOST', '172.17.0.1')
+PADDLEOCR_SERVICE_URL = os.environ.get('PADDLEOCR_SERVICE_URL', f'http://{DEFAULT_OCR_HOST}:3002')
 USE_PADDLEOCR_SERVICE = os.environ.get('USE_PADDLEOCR_SERVICE', 'true').lower() == 'true'
+
+logger.info(f"PaddleOCR service URL: {PADDLEOCR_SERVICE_URL}")
 
 
 def call_paddleocr_service(base64_document: str, filename: str) -> Dict[str, Any]:

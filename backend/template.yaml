@@ -31,7 +31,7 @@ Resources:
           LOG_LEVEL: INFO
           PYTHONUNBUFFERED: 1
           USE_PADDLEOCR_SERVICE: 'true'
-          PADDLEOCR_SERVICE_URL: 'http://host.docker.internal:3002'
+          PADDLEOCR_HOST: '172.17.0.1'
       Events:
         ProcessDocument:
           Type: HttpApi
