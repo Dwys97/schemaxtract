@@ -1,4 +1,10 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import {
   Stage,
@@ -14,6 +20,29 @@ import "./AnnotationCanvas.css";
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+
+// Memoized PDF Page component to prevent unnecessary re-renders
+const MemoizedPDFPage = React.memo(
+  ({ pageNumber, width, onRenderSuccess }) => {
+    return (
+      <Page
+        key={`page-${pageNumber}`}
+        pageNumber={pageNumber}
+        onRenderSuccess={onRenderSuccess}
+        renderTextLayer={true}
+        renderAnnotationLayer={false}
+        width={width}
+      />
+    );
+  },
+  (prevProps, nextProps) => {
+    // Only re-render if these specific props change
+    return (
+      prevProps.pageNumber === nextProps.pageNumber &&
+      prevProps.width === nextProps.width
+    );
+  }
+);
 
 /**
  * AnnotationCanvas Component (Tasks F & G)
@@ -36,7 +65,10 @@ function AnnotationCanvas({ documentData }) {
   const [updatedFields, setUpdatedFields] = useState({}); // Track bbox updates
   const [reextractingField, setReextractingField] = useState(null); // Track which field is being re-extracted
   const [zoom, setZoom] = useState(1.0); // Zoom level (1.0 = 100%)
+  const [pendingReextraction, setPendingReextraction] = useState(null); // Store bbox changes awaiting confirmation
+  const scrollPositionRef = useRef({ top: 0, left: 0 }); // Track scroll position
   const containerRef = useRef(null); // Document viewer reference (scrollable container)
+  const shapeRefs = useRef({}); // Refs for each shape for transformer
   const transformerRef = useRef(null);
   const fieldsPaneRef = useRef(null);
 
@@ -47,32 +79,71 @@ function AnnotationCanvas({ documentData }) {
   const mimeType = documentData?.mimeType || "application/pdf";
 
   // Calculate document source for react-pdf
-  const documentSource = base64 ? { data: atob(base64) } : null;
+  const documentSource = useMemo(
+    () => (base64 ? { data: atob(base64) } : null),
+    [base64]
+  );
+
+  // Memoize page width to prevent unnecessary re-renders
+  const [pageRenderWidth, setPageRenderWidth] = useState(600);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      const newWidth = containerRef.current.offsetWidth * 0.95;
+      if (Math.abs(newWidth - pageRenderWidth) > 10) {
+        // Only update if significant change
+        setPageRenderWidth(newWidth);
+      }
+    }
+  }, []); // Only run once on mount
 
   // Handle PDF load success
-  const onDocumentLoadSuccess = ({ numPages }) => {
+  const onDocumentLoadSuccess = useCallback(({ numPages }) => {
     setNumPages(numPages);
     setCurrentPage(1);
-  };
+  }, []);
 
   // Handle page render success
-  const onPageRenderSuccess = (page) => {
+  const onPageRenderSuccess = useCallback((page) => {
     setPageWidth(page.width);
     setPageHeight(page.height);
-  };
+  }, []);
 
   // Convert normalized coordinates [0,0,1000,1000] to actual pixel coordinates
-  const normalizedToPixels = (bbox) => {
-    if (!bbox || !pageWidth || !pageHeight) return null;
+  const normalizedToPixels = useCallback(
+    (bbox) => {
+      if (!bbox || !pageWidth || !pageHeight) return null;
 
-    const [x1, y1, x2, y2] = bbox;
-    return {
-      x: (x1 / 1000) * pageWidth,
-      y: (y1 / 1000) * pageHeight,
-      width: ((x2 - x1) / 1000) * pageWidth,
-      height: ((y2 - y1) / 1000) * pageHeight,
-    };
-  };
+      const [x1, y1, x2, y2] = bbox;
+      return {
+        x: (x1 / 1000) * pageWidth,
+        y: (y1 / 1000) * pageHeight,
+        width: ((x2 - x1) / 1000) * pageWidth,
+        height: ((y2 - y1) / 1000) * pageHeight,
+      };
+    },
+    [pageWidth, pageHeight]
+  );
+
+  // Memoize inline styles to prevent re-renders
+  const pdfScaleStyle = useMemo(
+    () => ({
+      transform: `scale(${zoom})`,
+      transformOrigin: "top center",
+      transition: "transform 0.3s ease-in-out",
+      position: "relative",
+    }),
+    [zoom]
+  );
+
+  const overlayScaleStyle = useMemo(
+    () => ({
+      transform: `scale(${zoom})`,
+      transformOrigin: "top center",
+      transition: "transform 0.3s ease-in-out",
+    }),
+    [zoom]
+  );
 
   // Re-extract text from a specific bbox using OCR
   const reextractTextFromBbox = async (field, newBbox) => {
@@ -142,6 +213,83 @@ function AnnotationCanvas({ documentData }) {
       setReextractingField(null);
     }
   };
+
+  // Handle bbox change confirmation
+  const handleConfirmReextraction = async () => {
+    if (!pendingReextraction) return;
+
+    const { field, bbox } = pendingReextraction;
+    setPendingReextraction(null);
+
+    // Perform re-extraction
+    await reextractTextFromBbox(field, bbox);
+  };
+
+  const handleCancelReextraction = () => {
+    if (!pendingReextraction) return;
+
+    // Revert the bbox change in updatedFields
+    const { field, originalBbox } = pendingReextraction;
+
+    // Revert to original bbox in state
+    setUpdatedFields((prev) => {
+      const newFields = { ...prev };
+      if (newFields[field.id]) {
+        newFields[field.id] = {
+          ...newFields[field.id],
+          bbox: originalBbox,
+        };
+      }
+      return newFields;
+    });
+
+    setPendingReextraction(null);
+
+    // Reset the shape to original position/size visually
+    if (shapeRefs.current[field.id]) {
+      const pixels = normalizedToPixels(originalBbox);
+      if (pixels) {
+        const shape = shapeRefs.current[field.id];
+        shape.x(pixels.x);
+        shape.y(pixels.y);
+        shape.width(pixels.width);
+        shape.height(pixels.height);
+        shape.getLayer().batchDraw();
+      }
+    }
+  };
+
+  // Effect to attach transformer when field selection changes
+  useEffect(() => {
+    if (
+      selectedField &&
+      transformerRef.current &&
+      shapeRefs.current[selectedField.id]
+    ) {
+      transformerRef.current.nodes([shapeRefs.current[selectedField.id]]);
+      transformerRef.current.getLayer()?.batchDraw();
+    } else if (transformerRef.current) {
+      transformerRef.current.nodes([]);
+      transformerRef.current.getLayer()?.batchDraw();
+    }
+  }, [selectedField]);
+
+  // Preserve scroll position on state updates (except when zooming/selecting)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Save scroll position before render
+    const handleScroll = () => {
+      scrollPositionRef.current = {
+        top: container.scrollTop,
+        left: container.scrollLeft,
+      };
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Handle field selection
   const handleFieldClick = (field) => {
@@ -404,34 +552,19 @@ function AnnotationCanvas({ documentData }) {
                     }
                   >
                     <div className="page-wrapper">
-                      <div
-                        style={{
-                          transform: `scale(${zoom})`,
-                          transformOrigin: "top center",
-                          transition: "transform 0.3s ease-in-out",
-                          position: "relative",
-                        }}
-                      >
-                        <Page
+                      <div style={pdfScaleStyle}>
+                        <MemoizedPDFPage
                           pageNumber={currentPage}
+                          width={pageRenderWidth}
                           onRenderSuccess={onPageRenderSuccess}
-                          renderTextLayer={true}
-                          renderAnnotationLayer={false}
-                          width={
-                            containerRef.current?.offsetWidth * 0.95 || 600
-                          }
                         />
                       </div>
 
-                      {/* Konva Overlay for Annotations - Outside the scaled div */}
+                      {/* Konva Overlay for Annotations - Positioned over the PDF */}
                       {pageWidth && pageHeight && (
                         <div
                           className="annotation-overlay"
-                          style={{
-                            transform: `scale(${zoom})`,
-                            transformOrigin: "top center",
-                            transition: "transform 0.3s ease-in-out",
-                          }}
+                          style={overlayScaleStyle}
                         >
                           <Stage
                             width={pageWidth}
@@ -468,6 +601,9 @@ function AnnotationCanvas({ documentData }) {
                                   return (
                                     <React.Fragment key={field.id || index}>
                                       <Rect
+                                        ref={(el) => {
+                                          shapeRefs.current[field.id] = el;
+                                        }}
                                         x={pixels.x}
                                         y={pixels.y}
                                         width={pixels.width}
@@ -483,6 +619,7 @@ function AnnotationCanvas({ documentData }) {
                                         }
                                         cornerRadius={4}
                                         draggable={true}
+                                        name={`bbox-${field.id}`}
                                         onDragMove={(e) => {
                                           // Prevent drag from going outside bounds
                                           const shape = e.target;
@@ -507,8 +644,8 @@ function AnnotationCanvas({ documentData }) {
                                         }}
                                         onClick={() => handleFieldClick(field)}
                                         onTap={() => handleFieldClick(field)}
-                                        onDragEnd={async (e) => {
-                                          // Update bbox on drag
+                                        onDragEnd={(e) => {
+                                          // Update bbox position immediately (visual update)
                                           const newX = e.target.x();
                                           const newY = e.target.y();
                                           const width = e.target.width();
@@ -536,19 +673,33 @@ function AnnotationCanvas({ documentData }) {
                                             normalizedY2,
                                           ];
 
+                                          // Update the bbox immediately in updatedFields
+                                          setUpdatedFields((prev) => ({
+                                            ...prev,
+                                            [field.id]: {
+                                              ...(prev[field.id] || field),
+                                              bbox: newBbox,
+                                            },
+                                          }));
+
                                           console.log(
                                             `Bbox moved for ${field.label}:`,
                                             newBbox
                                           );
 
-                                          // Re-extract text from new bbox location
-                                          await reextractTextFromBbox(
+                                          // Get original bbox
+                                          const currentBbox = field.bbox;
+
+                                          // Show prompt to ask if user wants to re-extract
+                                          setPendingReextraction({
                                             field,
-                                            newBbox
-                                          );
+                                            bbox: newBbox,
+                                            originalBbox: currentBbox,
+                                            action: "moved",
+                                          });
                                         }}
                                         onTransformEnd={(e) => {
-                                          // Handle resize
+                                          // Update bbox size immediately (visual update)
                                           const node = e.target;
                                           const scaleX = node.scaleX();
                                           const scaleY = node.scaleY();
@@ -561,6 +712,10 @@ function AnnotationCanvas({ documentData }) {
                                             node.width() * scaleX;
                                           const newHeight =
                                             node.height() * scaleY;
+
+                                          // Update the node dimensions
+                                          node.width(newWidth);
+                                          node.height(newHeight);
 
                                           const normalizedX1 = Math.round(
                                             (node.x() / pageWidth) * 1000
@@ -586,13 +741,30 @@ function AnnotationCanvas({ documentData }) {
                                             normalizedY2,
                                           ];
 
+                                          // Update the bbox immediately in updatedFields
                                           setUpdatedFields((prev) => ({
                                             ...prev,
                                             [field.id]: {
-                                              ...field,
+                                              ...(prev[field.id] || field),
                                               bbox: newBbox,
                                             },
                                           }));
+
+                                          console.log(
+                                            `Bbox resized for ${field.label}:`,
+                                            newBbox
+                                          );
+
+                                          // Get original bbox
+                                          const currentBbox = field.bbox;
+
+                                          // Show prompt to ask if user wants to re-extract
+                                          setPendingReextraction({
+                                            field,
+                                            bbox: newBbox,
+                                            originalBbox: currentBbox,
+                                            action: "resized",
+                                          });
                                         }}
                                         onMouseEnter={(e) => {
                                           const container = e.target
@@ -622,8 +794,94 @@ function AnnotationCanvas({ documentData }) {
                                     </React.Fragment>
                                   );
                                 })}
+                              {/* Transformer for resize handles - only show when field is selected */}
+                              <Transformer
+                                ref={transformerRef}
+                                borderStroke="#1d72f3"
+                                borderStrokeWidth={2}
+                                anchorSize={12}
+                                anchorStroke="#1d72f3"
+                                anchorFill="#ffffff"
+                                anchorStrokeWidth={2}
+                                anchorCornerRadius={2}
+                                enabledAnchors={[
+                                  "top-left",
+                                  "top-right",
+                                  "bottom-left",
+                                  "bottom-right",
+                                  "middle-left",
+                                  "middle-right",
+                                  "top-center",
+                                  "bottom-center",
+                                ]}
+                                boundBoxFunc={(oldBox, newBox) => {
+                                  // Limit resize to stay within page bounds and minimum size
+                                  if (newBox.width < 20 || newBox.height < 10) {
+                                    return oldBox;
+                                  }
+                                  if (
+                                    newBox.x < 0 ||
+                                    newBox.y < 0 ||
+                                    newBox.x + newBox.width > pageWidth ||
+                                    newBox.y + newBox.height > pageHeight
+                                  ) {
+                                    return oldBox;
+                                  }
+                                  return newBox;
+                                }}
+                                rotateEnabled={false}
+                                keepRatio={false}
+                              />
                             </Layer>
                           </Stage>
+                        </div>
+                      )}
+
+                      {/* Confirmation Popup - positioned next to bbox */}
+                      {pendingReextraction && (
+                        <div
+                          className="bbox-popup glass-card-elevated"
+                          style={{
+                            position: "absolute",
+                            left: (() => {
+                              const pixels = normalizedToPixels(
+                                pendingReextraction.bbox
+                              );
+                              if (!pixels) return "50%";
+                              const popupX =
+                                (pixels.x + pixels.width) * zoom + 10;
+                              return `${popupX}px`;
+                            })(),
+                            top: (() => {
+                              const pixels = normalizedToPixels(
+                                pendingReextraction.bbox
+                              );
+                              if (!pixels) return "50%";
+                              const popupY = pixels.y * zoom;
+                              return `${popupY}px`;
+                            })(),
+                            zIndex: 1000,
+                          }}
+                        >
+                          <div className="bbox-popup-content">
+                            <p className="bbox-popup-message">
+                              Re-extract text?
+                            </p>
+                            <div className="bbox-popup-actions">
+                              <button
+                                className="btn-popup btn-accept"
+                                onClick={handleConfirmReextraction}
+                              >
+                                ✓
+                              </button>
+                              <button
+                                className="btn-popup btn-cancel"
+                                onClick={handleCancelReextraction}
+                              >
+                                ✗
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>

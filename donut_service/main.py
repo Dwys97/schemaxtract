@@ -897,13 +897,41 @@ def reextract_bbox():
                 f"Cropped region: ({x1}, {y1}) to ({x2}, {y2}), size: {cropped_image.size}"
             )
 
-            # Run OCR on cropped region
-            ocr_result = pytesseract.image_to_string(cropped_image, config="--psm 6")
+            # Preprocess image for better OCR accuracy
+            # 1. Convert to grayscale
+            cropped_gray = cropped_image.convert("L")
+
+            # 2. Increase contrast and brightness
+            from PIL import ImageEnhance
+
+            enhancer = ImageEnhance.Contrast(cropped_gray)
+            cropped_enhanced = enhancer.enhance(2.0)  # Increase contrast
+
+            # 3. Upscale small images (Tesseract works better on larger images)
+            min_height = 50
+            if cropped_enhanced.size[1] < min_height:
+                scale_factor = min_height / cropped_enhanced.size[1]
+                new_size = (
+                    int(cropped_enhanced.size[0] * scale_factor),
+                    int(cropped_enhanced.size[1] * scale_factor),
+                )
+                cropped_enhanced = cropped_enhanced.resize(
+                    new_size, Image.Resampling.LANCZOS
+                )
+                logger.info(f"Upscaled image to: {new_size}")
+
+            # Run OCR on preprocessed image with optimized config
+            # --psm 7: Treat image as a single text line
+            # --oem 3: Use LSTM OCR Engine
+            ocr_config = "--psm 7 --oem 3"
+            ocr_result = pytesseract.image_to_string(
+                cropped_enhanced, config=ocr_config
+            )
             extracted_text = ocr_result.strip()
 
-            # Get confidence
+            # Get confidence from enhanced image
             ocr_data = pytesseract.image_to_data(
-                cropped_image, output_type=pytesseract.Output.DICT
+                cropped_enhanced, output_type=pytesseract.Output.DICT, config=ocr_config
             )
             confidences = [int(c) for c in ocr_data["conf"] if int(c) > 0]
             avg_confidence = (
