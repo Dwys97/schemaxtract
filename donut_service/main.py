@@ -324,7 +324,9 @@ def match_value_to_ocr_bbox(
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
-def extract_invoice_fields_layoutlm(image_path: str, custom_fields: list = None) -> List[dict]:
+def extract_invoice_fields_layoutlm(
+    image_path: str, custom_fields: list = None
+) -> List[dict]:
     """
     Extract invoice fields using Impira's LayoutLM document Q&A model.
 
@@ -353,24 +355,30 @@ def extract_invoice_fields_layoutlm(image_path: str, custom_fields: list = None)
         logger.info(f"OCR found {len(ocr_words)} words")
 
         # Define questions for invoice fields
-        # Use custom fields if provided, otherwise use default questions
+        # Start with default questions, then add/override with custom fields
+        questions = {
+            "invoice_number": "What is the invoice number?",
+            "invoice_date": "What is the invoice date?",
+            "total_amount": "What is the total amount?",
+            "vendor_name": "What is the vendor name?",
+            "po_number": "What is the PO number?",
+        }
+        
+        # Add or override with custom fields if provided
         if custom_fields:
-            logger.info(f"Using {len(custom_fields)} custom field definitions")
-            questions = {}
+            logger.info(f"Adding {len(custom_fields)} custom field definitions to defaults")
+            logger.info(f"Custom fields received: {custom_fields}")
+            
             for field in custom_fields:
-                field_key = field.get('key') or field.get('field_key')
-                question = field.get('question')
+                field_key = field.get("key") or field.get("field_key")
+                question = field.get("question")
                 if field_key and question:
                     questions[field_key] = question
+                    logger.info(f"Added/updated question for {field_key}: {question}")
+                else:
+                    logger.warning(f"Skipping invalid field: {field}")
         else:
-            # Default questions (reduced set for performance)
-            questions = {
-                "invoice_number": "What is the invoice number?",
-                "invoice_date": "What is the invoice date?",
-                "total_amount": "What is the total amount?",
-                "vendor_name": "What is the vendor name?",
-                "po_number": "What is the PO number?",
-            }
+            logger.info("No custom fields provided - using only default questions")
 
         fields = []
         field_id = 1
@@ -506,7 +514,9 @@ def merge_line_words(words: list) -> dict:
     }
 
 
-def extract_fields_with_donut(image_path: str, custom_fields: list = None) -> Dict[str, Any]:
+def extract_fields_with_donut(
+    image_path: str, custom_fields: list = None
+) -> Dict[str, Any]:
     """
     Extract invoice fields using Impira LayoutLM Document Q&A model.
 
@@ -770,6 +780,8 @@ def extract_document():
     """
     try:
         data = request.get_json()
+        
+        logger.info(f"[/extract] Received request with keys: {list(data.keys()) if data else 'None'}")
 
         if not data or "image" not in data:
             return jsonify({"error": "Missing image data"}), 400
@@ -778,6 +790,13 @@ def extract_document():
         doc_data = base64.b64decode(data["image"])
         doc_format = data.get("format", "png").lower()
         custom_fields = data.get("custom_fields")  # Optional custom field definitions
+        
+        logger.info(f"[/extract] custom_fields parameter: {custom_fields}")
+        if custom_fields:
+            logger.info(f"[/extract] Number of custom fields: {len(custom_fields)}")
+            logger.info(f"[/extract] Custom fields detail: {json.dumps(custom_fields, indent=2)}")
+        else:
+            logger.info("[/extract] No custom_fields in request")
 
         # Save to temp file
         with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:

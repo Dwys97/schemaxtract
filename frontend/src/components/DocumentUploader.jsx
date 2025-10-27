@@ -1,11 +1,11 @@
-import React, { useState, useRef } from 'react';
-import axios from 'axios';
-import fieldService from '../services/fieldService';
-import './DocumentUploader.css';
+import React, { useState, useRef } from "react";
+import axios from "axios";
+import fieldService from "../services/fieldService";
+import "./DocumentUploader.css";
 
 /**
  * DocumentUploader Component (Task E)
- * 
+ *
  * Provides file upload interface with:
  * - File input with drag-and-drop support
  * - Base64 encoding via FileReader
@@ -30,16 +30,21 @@ function DocumentUploader({ onDocumentProcessed }) {
 
   // Validate file type and size
   const validateAndSetFile = (file) => {
-    const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    const allowedTypes = [
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+    ];
     const maxSize = 10 * 1024 * 1024; // 10MB
 
     if (!allowedTypes.includes(file.type)) {
-      setError('Only PDF, PNG, and JPEG files are supported');
+      setError("Only PDF, PNG, and JPEG files are supported");
       return;
     }
 
     if (file.size > maxSize) {
-      setError('File size must be less than 10MB');
+      setError("File size must be less than 10MB");
       return;
     }
 
@@ -71,7 +76,7 @@ function DocumentUploader({ onDocumentProcessed }) {
   // Process document upload
   const handleUpload = async () => {
     if (!selectedFile) {
-      setError('Please select a file first');
+      setError("Please select a file first");
       return;
     }
 
@@ -81,19 +86,22 @@ function DocumentUploader({ onDocumentProcessed }) {
     try {
       // Convert file to Base64
       const base64 = await fileToBase64(selectedFile);
-      
+
       // Remove data URL prefix (e.g., "data:application/pdf;base64,")
-      const base64Data = base64.split(',')[1];
+      const base64Data = base64.split(",")[1];
 
       // Get custom field definitions from field manager
       const customFields = fieldService.getFieldsAsQuestions();
 
+      console.log("Custom fields being sent:", customFields);
+      console.log("Number of custom fields:", customFields.length);
+
       // Send to backend with custom fields
-      const response = await axios.post('/api/process-document', {
+      const response = await axios.post("/api/process-document", {
         document: base64Data,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
-        customFields: customFields.length > 0 ? customFields : undefined
+        customFields: customFields.length > 0 ? customFields : undefined,
       });
 
       // Call parent callback with response data
@@ -102,22 +110,21 @@ function DocumentUploader({ onDocumentProcessed }) {
           ...response.data,
           filename: selectedFile.name,
           mimeType: selectedFile.type,
-          base64: base64Data
+          base64: base64Data,
         });
       }
 
       // Reset state
       setSelectedFile(null);
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
-
     } catch (err) {
-      console.error('Upload error:', err);
+      console.error("Upload error:", err);
       setError(
-        err.response?.data?.message || 
-        err.message || 
-        'Failed to process document. Please try again.'
+        err.response?.data?.message ||
+          err.message ||
+          "Failed to process document. Please try again."
       );
     } finally {
       setLoading(false);
@@ -143,7 +150,9 @@ function DocumentUploader({ onDocumentProcessed }) {
 
       {/* Drag and Drop Zone */}
       <div
-        className={`upload-zone ${dragActive ? 'drag-active' : ''} ${selectedFile ? 'has-file' : ''}`}
+        className={`upload-zone ${dragActive ? "drag-active" : ""} ${
+          selectedFile ? "has-file" : ""
+        }`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
@@ -155,17 +164,39 @@ function DocumentUploader({ onDocumentProcessed }) {
           type="file"
           accept=".pdf,.png,.jpg,.jpeg"
           onChange={handleFileChange}
-          style={{ display: 'none' }}
+          style={{ display: "none" }}
         />
 
         <div className="upload-icon">
           {selectedFile ? (
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
             </svg>
           ) : (
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            <svg
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
             </svg>
           )}
         </div>
@@ -194,8 +225,19 @@ function DocumentUploader({ onDocumentProcessed }) {
       {/* Error Message */}
       {error && (
         <div className="error-message">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
           </svg>
           <span>{error}</span>
         </div>
@@ -213,7 +255,7 @@ function DocumentUploader({ onDocumentProcessed }) {
             Processing with DocVQA (30-60s)...
           </>
         ) : (
-          'Process Document'
+          "Process Document"
         )}
       </button>
 
@@ -231,7 +273,10 @@ function DocumentUploader({ onDocumentProcessed }) {
             </div>
             <div className="loading-step active">
               <span className="step-icon">🤖</span>
-              <span>DocVQA asking questions (invoice number, date, total, vendor, customer)...</span>
+              <span>
+                DocVQA asking questions (invoice number, date, total, vendor,
+                customer)...
+              </span>
             </div>
             <div className="loading-step">
               <span className="step-icon">📦</span>
