@@ -35,8 +35,7 @@ function AnnotationCanvas({ documentData }) {
   const [editingBbox, setEditingBbox] = useState(null);
   const [updatedFields, setUpdatedFields] = useState({}); // Track bbox updates
   const [zoom, setZoom] = useState(1.0); // Zoom level (1.0 = 100%)
-  const containerRef = useRef(null); // Document viewer scroll container
-  const modalRef = useRef(null); // Modal scroll container
+  const containerRef = useRef(null); // Document viewer reference (scrollable container)
   const transformerRef = useRef(null);
   const fieldsPaneRef = useRef(null);
 
@@ -81,64 +80,46 @@ function AnnotationCanvas({ documentData }) {
 
     setSelectedField(isDeselecting ? null : field);
 
-    // Zoom in when selecting, zoom out when deselecting
-    if (isDeselecting) {
-      setZoom(1.0); // Reset to 100%
-    } else {
-      setZoom(1.3); // Zoom to 130%
-    }
-
     // Navigate to the page containing the field if needed
     if (field.page && field.page !== currentPage) {
       setCurrentPage(field.page);
     }
 
-    // Scroll the bbox into view after a short delay to allow rendering
-    setTimeout(() => {
-      if (!isDeselecting && field.bbox) {
-        const pixels = normalizedToPixels(field.bbox);
-        if (pixels) {
-          // Calculate the vertical center of the bbox (accounting for zoom)
-          const bboxCenterY = (pixels.y + pixels.height / 2) * zoom;
+    // Zoom in when selecting, zoom out when deselecting
+    if (isDeselecting) {
+      setZoom(1.0); // Reset to 100%
+    } else {
+      setZoom(1.3); // Zoom to 130%
 
-          // Scroll the document viewer container (inner scroll)
-          if (containerRef.current) {
+      // Scroll the bbox into view after zoom and page navigation
+      setTimeout(() => {
+        if (field.bbox && containerRef.current) {
+          const pixels = normalizedToPixels(field.bbox);
+          if (pixels) {
             const viewer = containerRef.current;
+
+            // Calculate bbox center position AFTER zoom is applied
+            const bboxCenterX = (pixels.x + pixels.width / 2) * 1.3;
+            const bboxCenterY = (pixels.y + pixels.height / 2) * 1.3;
+
+            // Get viewport dimensions
+            const viewerWidth = viewer.clientWidth;
             const viewerHeight = viewer.clientHeight;
+
+            // Calculate scroll positions to center the bbox
+            const targetScrollLeft = bboxCenterX - viewerWidth / 2;
             const targetScrollTop = bboxCenterY - viewerHeight / 2;
 
+            // Scroll to center the bbox
             viewer.scrollTo({
+              left: Math.max(0, targetScrollLeft),
               top: Math.max(0, targetScrollTop),
               behavior: "smooth",
             });
           }
-
-          // Also scroll the modal container if it exists (outer scroll)
-          if (modalRef.current) {
-            const modal = modalRef.current;
-            const modalHeight = modal.clientHeight;
-
-            // Get the position of the document viewer within the modal
-            const viewerRect = containerRef.current?.getBoundingClientRect();
-            const modalRect = modal.getBoundingClientRect();
-
-            if (viewerRect && modalRect) {
-              // Calculate how far down the modal we need to scroll
-              // to bring the viewer (and the bbox) into view
-              const viewerTopRelativeToModal =
-                viewerRect.top - modalRect.top + modal.scrollTop;
-              const targetModalScroll =
-                viewerTopRelativeToModal - modalHeight / 4; // Scroll to upper quarter
-
-              modal.scrollTo({
-                top: Math.max(0, targetModalScroll),
-                behavior: "smooth",
-              });
-            }
-          }
         }
-      }
-    }, 150); // Slightly longer delay to account for zoom animation
+      }, 350); // Wait for zoom animation and page render
+    }
   };
 
   // Render field list item
@@ -218,7 +199,7 @@ function AnnotationCanvas({ documentData }) {
   };
 
   return (
-    <div className="annotation-canvas" ref={modalRef}>
+    <div className="annotation-canvas">
       <div className="canvas-layout">
         {/* Left Pane: Field List */}
         <div className="fields-pane glass-card-elevated">

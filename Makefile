@@ -10,14 +10,14 @@ install: ## Install all dependencies (backend + frontend + donut)
 	@echo "📦 Installing AWS SAM CLI..."
 	pip install --user aws-sam-cli
 	@echo "📦 Installing Donut service dependencies..."
-	cd donut_service && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && deactivate
+	cd donut_service && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 	@echo "📦 Installing frontend dependencies..."
 	cd frontend && npm install
 	@echo "✅ All dependencies installed!"
 
 install-donut: ## Install Donut service dependencies only
 	@echo "📦 Installing Donut service..."
-	cd donut_service && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && deactivate
+	cd donut_service && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 
 build-backend: ## Build backend Lambda container (lightweight, no Donut)
 	@echo "🔨 Building backend Lambda..."
@@ -30,7 +30,7 @@ start-backend: ## Start backend (SAM Local API)
 
 start-donut: ## Start Donut service
 	@echo "🚀 Starting Donut service on http://localhost:3002..."
-	cd donut_service && source venv/bin/activate && python main.py
+	cd donut_service && ./venv/bin/python main.py
 
 start-frontend: ## Start frontend (Vite dev server)
 	@echo "🚀 Starting frontend on http://localhost:3000..."

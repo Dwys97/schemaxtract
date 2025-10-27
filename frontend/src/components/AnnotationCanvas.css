@@ -3,6 +3,10 @@
 .annotation-canvas {
   width: 100%;
   margin-top: 20px;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Dual-Pane Layout */
@@ -10,7 +14,8 @@
   display: grid;
   grid-template-columns: 350px 1fr;
   gap: 20px;
-  min-height: 600px;
+  flex: 1;
+  overflow: hidden;
   align-items: start;
 }
 
@@ -33,9 +38,8 @@
 
 /* Left Pane: Fields List */
 .fields-pane {
-  position: sticky;
-  top: 20px;
-  max-height: calc(100vh - 100px);
+  height: 100%;
+  max-height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -180,9 +184,18 @@
 
 /* Right Pane: Document Viewer */
 .document-pane {
-  min-height: 600px;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+/* Sticky header for document pane */
+.document-pane .pane-header {
+  flex-shrink: 0;
+  background: var(--bg-card-light);
+  z-index: 10;
+  border-radius: 8px 8px 0 0;
 }
 
 /* Page Controls */

@@ -171,7 +171,7 @@
 /* Modal Body */
 .modal-body {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   padding: 20px;
   background: var(--bg-secondary);
 }
@@ -179,11 +179,12 @@
 /* Adjust AnnotationCanvas for modal */
 .modal-body .annotation-canvas {
   margin: 0;
+  height: 100%;
+  overflow: auto;
 }
 
 .modal-body .canvas-layout {
   min-height: auto;
-  height: 100%;
 }
 
 /* Modal Footer */
