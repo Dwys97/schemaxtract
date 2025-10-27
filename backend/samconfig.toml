@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+skip_pull_image = true
+docker_network = "host"
+
+[default.local_invoke.parameters]
+skip_pull_image = true
+docker_network = "host"
+
+[default.build.parameters]
+cached = true
+parallel = true
