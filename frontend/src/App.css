@@ -38,6 +38,32 @@
   display: flex;
   gap: 12px;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.btn-tab {
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-tab:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--primary-color);
+  color: var(--text-primary);
+}
+
+.btn-tab.active {
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: white;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
 }
 
 .btn-secondary-outline {

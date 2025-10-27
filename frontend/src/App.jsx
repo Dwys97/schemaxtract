@@ -2,12 +2,14 @@ import React, { useState, useEffect } from "react";
 import DocumentUploader from "./components/DocumentUploader";
 import DocumentList from "./components/DocumentList";
 import DocumentViewerModal from "./components/DocumentViewerModal";
+import FieldManager from "./components/FieldManager";
 import "./App.css";
 
 function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showUploader, setShowUploader] = useState(true);
+  const [currentView, setCurrentView] = useState("documents"); // 'documents' or 'fields'
 
   // Load documents from localStorage on mount
   useEffect(() => {
@@ -133,10 +135,28 @@ function App() {
               <p>Interactive Document Processing & Template Learning</p>
             </div>
             <div className="header-buttons">
-              <button className="btn-primary" onClick={toggleUploader}>
-                {showUploader ? "Hide Uploader" : "Upload Document"}
+              <button
+                className={`btn-tab ${
+                  currentView === "documents" ? "active" : ""
+                }`}
+                onClick={() => setCurrentView("documents")}
+              >
+                📄 Documents
               </button>
-              {documents.length > 0 && (
+              <button
+                className={`btn-tab ${
+                  currentView === "fields" ? "active" : ""
+                }`}
+                onClick={() => setCurrentView("fields")}
+              >
+                📋 Fields
+              </button>
+              {currentView === "documents" && (
+                <button className="btn-primary" onClick={toggleUploader}>
+                  {showUploader ? "Hide Uploader" : "Upload Document"}
+                </button>
+              )}
+              {currentView === "documents" && documents.length > 0 && (
                 <button
                   className="btn-secondary-outline"
                   onClick={() => {
@@ -157,56 +177,66 @@ function App() {
           </div>
         </header>
 
-        {/* Document Upload Section */}
-        {showUploader && (
-          <div className="uploader-section">
-            <DocumentUploader onDocumentProcessed={handleDocumentProcessed} />
-          </div>
-        )}
+        {/* Field Manager View */}
+        {currentView === "fields" && <FieldManager />}
 
-        {/* Document List Section */}
-        {documents.length > 0 && (
-          <div className="documents-section">
-            <DocumentList
-              documents={documents}
-              onReviewDocument={handleReviewDocument}
-              onStatusChange={handleStatusChange}
-              onDeleteDocument={handleDeleteDocument}
-            />
-          </div>
-        )}
-
-        {/* Empty State */}
-        {documents.length === 0 && !showUploader && (
-          <div className="empty-state-container glass-card">
-            <div className="empty-state-content">
-              <svg
-                width="64"
-                height="64"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+        {/* Documents View */}
+        {currentView === "documents" && (
+          <>
+            {/* Document Upload Section */}
+            {showUploader && (
+              <div className="uploader-section">
+                <DocumentUploader
+                  onDocumentProcessed={handleDocumentProcessed}
                 />
-              </svg>
-              <h3>No Documents Yet</h3>
-              <p className="text-muted">
-                Upload a PDF or image to get started with automated field
-                extraction
-              </p>
-              <button
-                className="btn-primary"
-                onClick={() => setShowUploader(true)}
-              >
-                Upload First Document
-              </button>
-            </div>
-          </div>
+              </div>
+            )}
+
+            {/* Document List Section */}
+            {documents.length > 0 && (
+              <div className="documents-section">
+                <DocumentList
+                  documents={documents}
+                  onReviewDocument={handleReviewDocument}
+                  onStatusChange={handleStatusChange}
+                  onDeleteDocument={handleDeleteDocument}
+                />
+              </div>
+            )}
+
+            {/* Empty State */}
+            {documents.length === 0 && !showUploader && (
+              <div className="empty-state-container glass-card">
+                <div className="empty-state-content">
+                  <svg
+                    width="64"
+                    height="64"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                    />
+                  </svg>
+                  <h3>No Documents Yet</h3>
+                  <p className="text-muted">
+                    Upload a PDF or image to get started with automated field
+                    extraction
+                  </p>
+                  <button
+                    className="btn-primary"
+                    onClick={() => setShowUploader(true)}
+                  >
+                    Upload First Document
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

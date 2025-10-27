@@ -15,13 +15,14 @@ logger.setLevel(logging.INFO)
 DONUT_SERVICE_URL = os.environ.get('DONUT_SERVICE_URL', 'http://localhost:3002')
 
 
-def call_donut_service(document_data: bytes, file_format: str) -> Dict[str, Any]:
+def call_donut_service(document_data: bytes, file_format: str, custom_fields: list = None) -> Dict[str, Any]:
     """
     Call external Donut service for field extraction.
     
     Args:
         document_data: Raw document bytes
         file_format: Document format (png, jpg, pdf)
+        custom_fields: Optional list of custom field definitions from user
         
     Returns:
         Dictionary with extracted fields
@@ -30,14 +31,22 @@ def call_donut_service(document_data: bytes, file_format: str) -> Dict[str, Any]
         # Encode document to base64
         doc_base64 = base64.b64encode(document_data).decode('utf-8')
         
+        # Prepare request payload
+        payload = {
+            'image': doc_base64,
+            'format': file_format
+        }
+        
+        # Add custom fields if provided
+        if custom_fields:
+            payload['custom_fields'] = custom_fields
+            logger.info(f"Using {len(custom_fields)} custom field definitions")
+        
         # Call Donut service
         logger.info(f"Calling Donut service at {DONUT_SERVICE_URL}/extract")
         response = requests.post(
             f"{DONUT_SERVICE_URL}/extract",
-            json={
-                'image': doc_base64,
-                'format': file_format
-            },
+            json=payload,
             timeout=180  # DocVQA + OCR can take 60-90 seconds
         )
         
@@ -65,6 +74,7 @@ def lambda_handler(event, context):
     AWS Lambda handler for document processing with Donut.
     
     Processes documents (PDF, images) and extracts structured fields using Donut service.
+    Supports custom field definitions from user.
     """
     try:
         # Parse request body
@@ -72,6 +82,7 @@ def lambda_handler(event, context):
         base64_document = body.get('document')
         filename = body.get('filename', 'document')
         mime_type = body.get('mimeType', 'application/pdf')
+        custom_fields = body.get('customFields')  # Optional custom field definitions
         
         if not base64_document:
             return {
@@ -84,6 +95,8 @@ def lambda_handler(event, context):
             }
         
         logger.info(f"Processing document: {filename} ({mime_type})")
+        if custom_fields:
+            logger.info(f"Using {len(custom_fields)} custom field definitions")
         
         # Decode Base64 document
         document_binary = base64.b64decode(base64_document)
@@ -98,7 +111,7 @@ def lambda_handler(event, context):
         logger.info(f"Document size: {len(document_binary)} bytes, format: {file_format}")
         
         # Call Donut service for field extraction (handles PDF conversion internally)
-        donut_result = call_donut_service(document_binary, file_format)
+        donut_result = call_donut_service(document_binary, file_format, custom_fields)
         
         # Extract fields and metadata from service response
         fields = donut_result.get('fields', [])

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
+import fieldService from '../services/fieldService';
 import './DocumentUploader.css';
 
 /**
@@ -84,11 +85,15 @@ function DocumentUploader({ onDocumentProcessed }) {
       // Remove data URL prefix (e.g., "data:application/pdf;base64,")
       const base64Data = base64.split(',')[1];
 
-      // Send to backend
+      // Get custom field definitions from field manager
+      const customFields = fieldService.getFieldsAsQuestions();
+
+      // Send to backend with custom fields
       const response = await axios.post('/api/process-document', {
         document: base64Data,
         filename: selectedFile.name,
-        mimeType: selectedFile.type
+        mimeType: selectedFile.type,
+        customFields: customFields.length > 0 ? customFields : undefined
       });
 
       // Call parent callback with response data

@@ -324,7 +324,7 @@ def match_value_to_ocr_bbox(
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
-def extract_invoice_fields_layoutlm(image_path: str) -> List[dict]:
+def extract_invoice_fields_layoutlm(image_path: str, custom_fields: list = None) -> List[dict]:
     """
     Extract invoice fields using Impira's LayoutLM document Q&A model.
 
@@ -333,6 +333,8 @@ def extract_invoice_fields_layoutlm(image_path: str) -> List[dict]:
 
     Args:
         image_path: Path to the invoice image
+        custom_fields: Optional list of custom field definitions from user
+                      Each field should have: key, question, type, required
 
     Returns:
         List of extracted fields with bboxes and confidence scores
@@ -351,15 +353,24 @@ def extract_invoice_fields_layoutlm(image_path: str) -> List[dict]:
         logger.info(f"OCR found {len(ocr_words)} words")
 
         # Define questions for invoice fields
-        # REDUCED: Only ask for the most critical fields to avoid timeout
-        # Each question takes ~5-10 seconds on CPU, so limit to 5-6 fields max
-        questions = {
-            "invoice_number": "What is the invoice number?",
-            "invoice_date": "What is the invoice date?",
-            "total_amount": "What is the total amount?",
-            "vendor_name": "What is the vendor name?",
-            "po_number": "What is the PO number?",
-        }
+        # Use custom fields if provided, otherwise use default questions
+        if custom_fields:
+            logger.info(f"Using {len(custom_fields)} custom field definitions")
+            questions = {}
+            for field in custom_fields:
+                field_key = field.get('key') or field.get('field_key')
+                question = field.get('question')
+                if field_key and question:
+                    questions[field_key] = question
+        else:
+            # Default questions (reduced set for performance)
+            questions = {
+                "invoice_number": "What is the invoice number?",
+                "invoice_date": "What is the invoice date?",
+                "total_amount": "What is the total amount?",
+                "vendor_name": "What is the vendor name?",
+                "po_number": "What is the PO number?",
+            }
 
         fields = []
         field_id = 1
@@ -495,18 +506,19 @@ def merge_line_words(words: list) -> dict:
     }
 
 
-def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
+def extract_fields_with_donut(image_path: str, custom_fields: list = None) -> Dict[str, Any]:
     """
     Extract invoice fields using Impira LayoutLM Document Q&A model.
 
     New Strategy (LayoutLM Q&A):
     - Use pre-trained invoice model that handles OCR internally
-    - Ask specific questions about invoice fields
+    - Ask specific questions about invoice fields (from custom fields or defaults)
     - Get answers with bounding boxes automatically
     - Much simpler and more accurate than previous OCR+token-classification approach
 
     Args:
         image_path: Path to image file
+        custom_fields: Optional list of custom field definitions from user
 
     Returns:
         Dictionary with extracted fields and bounding boxes
@@ -519,8 +531,8 @@ def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
         logger.info(f"Image loaded: {image_width}x{image_height}")
 
         # Extract invoice fields using LayoutLM Q&A
-        # This handles OCR internally, no need for Tesseract
-        layoutlm_fields = extract_invoice_fields_layoutlm(image_path)
+        # Pass custom fields if provided
+        layoutlm_fields = extract_invoice_fields_layoutlm(image_path, custom_fields)
         logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
 
         # Normalize bboxes to 0-1000 scale (frontend expects this)
@@ -539,6 +551,7 @@ def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
                 "mode": "layoutlm_qa",
                 "model": "impira/layoutlm-invoices",
                 "ai_fields": len(layoutlm_fields),
+                "custom_fields_used": custom_fields is not None,
             },
             "fields": layoutlm_fields,
             "image_size": {"width": image_width, "height": image_height},
@@ -735,7 +748,16 @@ def extract_document():
     Request body:
         {
             "image": "base64-encoded-document-data",
-            "format": "png|jpg|jpeg|pdf"
+            "format": "png|jpg|jpeg|pdf",
+            "custom_fields": [  // Optional
+                {
+                    "key": "invoice_number",
+                    "question": "What is the invoice number?",
+                    "type": "text",
+                    "required": true
+                },
+                ...
+            ]
         }
 
     Returns:
@@ -755,6 +777,7 @@ def extract_document():
         # Decode base64 document
         doc_data = base64.b64decode(data["image"])
         doc_format = data.get("format", "png").lower()
+        custom_fields = data.get("custom_fields")  # Optional custom field definitions
 
         # Save to temp file
         with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:
@@ -781,8 +804,8 @@ def extract_document():
                     f"PDF converted to {images[0].width}x{images[0].height} PNG"
                 )
 
-            # Extract fields
-            result = extract_fields_with_donut(tmp_path)
+            # Extract fields (with optional custom field definitions)
+            result = extract_fields_with_donut(tmp_path, custom_fields)
 
             logger.info(f"Returning {len(result.get('fields', []))} fields to client")
             if result.get("fields"):
