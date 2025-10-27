@@ -1,83 +1,151 @@
-# MD-Copilot IDP - Quick Start Guide
+# SchemaXtract - Quick Start Guide
 
-## System Status
+## 🚀 Starting Services
+
+### Recommended: VS Code Tasks
+
+The easiest way to start all services in the devcontainer:
+
+1. **Press** `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+2. **Type**: `Tasks: Run Task`
+3. **Select**: `Start All Services`
+
+This starts all 3 services in parallel:
+- ✅ Backend (SAM Local) - Port 3001
+- ✅ Frontend (Vite) - Port 3000  
+- ✅ Donut Service (LayoutLMv3) - Port 3002
+
+### Individual Service Tasks
+
+- `Start Backend (SAM Local)` - Backend only
+- `Start Frontend (Vite)` - Frontend only
+- `Start Donut Service` - ML service only
+- `Build Backend Only` - Just build SAM
+- `Test Backend API` - Quick API test
+- `Stop All Services` - Stop everything
+
+## 📊 System Status
+
+Once running, you should see:
 
 ### ✅ Backend (AWS SAM Local)
 - **Status**: RUNNING
 - **Port**: 3001
 - **Endpoint**: http://localhost:3001/process-document
-- **Process**: Python SAM CLI server
+- **Function**: PDF processing and API gateway
 
 ### ✅ Frontend (Vite Dev Server)  
-- **Status**: RUNNING (stopped in terminal, use `fg` to resume)
+- **Status**: RUNNING
 - **Port**: 3000
-- **URL**: http://localhost:3000/
-- **Process**: Node.js Vite dev server
+- **URL**: http://localhost:3000
+- **Function**: React UI for document upload and annotation
 
-## Starting the Services
+### ✅ Donut Service (LayoutLMv3)
+- **Status**: RUNNING
+- **Port**: 3002
+- **Endpoint**: http://localhost:3002/health
+- **Function**: AI field extraction using transformer model
 
-### Option 1: Using VS Code Tasks (Recommended)
+## 🔧 Manual Commands (Alternative)
 
-1. **Press** `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-2. **Type**: `Tasks: Run Task`
-3. **Select** one of:
-   - `Start Both Services` - Starts backend and frontend together
-   - `Start Backend (SAM Local)` - Backend only
-   - `Start Frontend (Vite)` - Frontend only
+If you prefer terminal commands over VS Code tasks:
 
-**Other useful tasks:**
-- `Build Backend Only` - Just build the Lambda container
-- `Test Backend API` - Quick API test
-- `Stop All Services` - Stop backend and frontend
-
-### Option 2: Using Makefile
-
-```bash
-# See all available commands
-make help
-
-# Install dependencies
-make install
-
-# Start backend only
-make start-backend
-
-# Start frontend only (in another terminal)
-make start-frontend
-
-# Test backend
-make test-backend
-
-# Clean build artifacts
-make clean
-
-# Stop all services
-make stop
-```
-
-### Option 3: Manual Commands
-
-#### Start Backend
+### Start Backend (SAM Local)
 ```bash
 cd /workspaces/schemaxtract/backend
-sam build --use-container
-sam local start-api --port 3001 --host 0.0.0.0
+sam build
+sam local start-api --port 3001 --host 0.0.0.0 --skip-pull-image
 ```
 
-#### Start Frontend
+### Start Frontend (Vite)
 ```bash
 cd /workspaces/schemaxtract/frontend
 npm install  # Only needed first time
 npm run dev -- --host 0.0.0.0
-# Or use the shortcut:
-npm start
 ```
 
-## Testing
+### Start Donut Service (LayoutLMv3)
+```bash
+cd /workspaces/schemaxtract/donut_service
+python3 -m venv venv  # Only needed first time
+source venv/bin/activate
+pip install -r requirements.txt  # Only needed first time
+python main.py
+```
+
+**Note**: The Donut service takes 5-10 minutes to install dependencies on first run (downloads PyTorch + Transformers ~3.6GB). Subsequent starts are fast.
+
+## 🧪 Testing the Services
 
 ### Test Backend API
 ```bash
+# Simple health check
 curl -X POST http://127.0.0.1:3001/process-document \
+  -H "Content-Type: application/json" \
+  -d '{"document": "dGVzdA==", "filename": "test.pdf"}'
+
+# Expected response:
+# {"message": "Document processed", "fields": {...}}
+```
+
+### Test Donut ML Service
+```bash
+# Health check
+curl http://localhost:3002/health
+
+# Expected response:
+# {"status": "healthy", "model": "loaded"}
+```
+
+### Test Frontend
+Simply open http://localhost:3000 in your browser.
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+Backend (.env or environment):
+```bash
+DONUT_SERVICE_URL=http://172.17.0.1:3002  # For Docker networking
+LOG_LEVEL=INFO
+```
+
+### Ports
+
+- **3000**: Frontend (React + Vite)
+- **3001**: Backend (AWS SAM Local / Lambda)
+- **3002**: Donut Service (LayoutLMv3 ML model)
+
+All ports are automatically forwarded in Codespaces and devcontainers.
+
+## 🐛 Troubleshooting
+
+### "No module named 'app'" Error
+- Ensure container was rebuilt with latest changes
+- Check that docker-in-docker is enabled in devcontainer.json
+- Restart container: `Ctrl+Shift+P` → `Dev Containers: Rebuild Container`
+
+### Docker Permission Denied
+- Fixed by docker-in-docker feature (no manual socket permissions needed)
+- Ensure `--privileged` flag in devcontainer runArgs
+
+### Donut Service Taking Long to Start
+- First time: Downloads PyTorch + Transformers (~3.6GB) - takes 5-10 min
+- Model loading: First request loads LayoutLMv3 - takes 30-60 sec
+- Subsequent runs are fast
+
+### SAM Build Slow
+- First time: Downloads Lambda runtime images (~900MB)
+- Use `sam build` without `--use-container` for faster builds (uses local pip)
+- Images are cached for subsequent runs
+
+### Frontend Not Loading
+```bash
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
+npm run dev -- --host 0.0.0.0
+```
   -H "Content-Type: application/json" \
   -d '{"document": "dGVzdCBkb2N1bWVudA=="}'
 ```
