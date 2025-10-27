@@ -31,7 +31,17 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    resources={
+        r"/*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type"],
+            "supports_credentials": True,
+        }
+    },
+)
 
 # Global model variables (lazy loaded)
 _doc_qa_pipeline = None
@@ -789,6 +799,143 @@ def extract_document():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/reextract-bbox", methods=["POST"])
+def reextract_bbox():
+    """
+    Re-extract text from a specific bbox region using OCR.
+
+    Request:
+        {
+            "image": "base64_encoded_image",
+            "format": "png|jpg|pdf",
+            "bbox": [x1, y1, x2, y2],  # normalized coordinates [0-1000]
+            "page": 1  # optional, for PDFs
+        }
+
+    Response:
+        {
+            "status": "success",
+            "text": "extracted text from bbox",
+            "confidence": 0.95
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({"status": "error", "error": "No JSON data provided"}), 400
+
+        image_b64 = data.get("image")
+        file_format = data.get("format", "png")
+        bbox = data.get("bbox")  # [x1, y1, x2, y2] normalized to 1000
+        page_num = data.get("page", 1)
+
+        if not image_b64:
+            return jsonify({"status": "error", "error": "No image provided"}), 400
+
+        if not bbox or len(bbox) != 4:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "error": "Invalid bbox format. Expected [x1, y1, x2, y2]",
+                    }
+                ),
+                400,
+            )
+
+        logger.info(f"Re-extracting text from bbox: {bbox} on page {page_num}")
+
+        # Decode base64 image
+        image_data = base64.b64decode(image_b64)
+
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{file_format}", delete=False
+        ) as tmp_file:
+            tmp_file.write(image_data)
+            tmp_path = tmp_file.name
+
+        try:
+            # Convert PDF to image if needed
+            if file_format == "pdf":
+                logger.info(f"Converting PDF page {page_num} to image...")
+                images = convert_from_path(
+                    tmp_path, first_page=page_num, last_page=page_num
+                )
+                if not images:
+                    return (
+                        jsonify({"status": "error", "error": "Failed to convert PDF"}),
+                        500,
+                    )
+
+                # Save the page as image
+                page_image_path = tmp_path.replace(".pdf", ".png")
+                images[0].save(page_image_path, "PNG")
+                image_path = page_image_path
+            else:
+                image_path = tmp_path
+
+            # Open image to get dimensions
+            image = Image.open(image_path).convert("RGB")
+            img_width, img_height = image.size
+
+            # Convert normalized bbox [0-1000] to pixel coordinates
+            x1 = int((bbox[0] / 1000.0) * img_width)
+            y1 = int((bbox[1] / 1000.0) * img_height)
+            x2 = int((bbox[2] / 1000.0) * img_width)
+            y2 = int((bbox[3] / 1000.0) * img_height)
+
+            # Ensure coordinates are valid
+            x1, x2 = max(0, min(x1, img_width)), max(0, min(x2, img_width))
+            y1, y2 = max(0, min(y1, img_height)), max(0, min(y2, img_height))
+
+            # Crop image to bbox
+            cropped_image = image.crop((x1, y1, x2, y2))
+
+            logger.info(
+                f"Cropped region: ({x1}, {y1}) to ({x2}, {y2}), size: {cropped_image.size}"
+            )
+
+            # Run OCR on cropped region
+            ocr_result = pytesseract.image_to_string(cropped_image, config="--psm 6")
+            extracted_text = ocr_result.strip()
+
+            # Get confidence
+            ocr_data = pytesseract.image_to_data(
+                cropped_image, output_type=pytesseract.Output.DICT
+            )
+            confidences = [int(c) for c in ocr_data["conf"] if int(c) > 0]
+            avg_confidence = (
+                sum(confidences) / len(confidences) / 100.0 if confidences else 0.0
+            )
+
+            logger.info(
+                f"Extracted text: '{extracted_text}' (confidence: {avg_confidence:.2f})"
+            )
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "text": extracted_text,
+                    "confidence": round(avg_confidence, 3),
+                    "bbox_pixels": [x1, y1, x2, y2],
+                    "image_size": {"width": img_width, "height": img_height},
+                }
+            )
+
+        finally:
+            # Cleanup temp files
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            if file_format == "pdf" and os.path.exists(image_path):
+                os.unlink(image_path)
+
+    except Exception as e:
+        logger.error(f"Error in reextract_bbox: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/", methods=["GET"])
 def index():
     """Root endpoint."""
@@ -799,6 +946,7 @@ def index():
             "endpoints": {
                 "/health": "Health check",
                 "/extract": "Extract fields from document (POST with base64 image)",
+                "/reextract-bbox": "Re-extract text from specific bbox (POST with image + bbox)",
             },
         }
     )

@@ -34,6 +34,7 @@ function AnnotationCanvas({ documentData }) {
   const [pageHeight, setPageHeight] = useState(0);
   const [editingBbox, setEditingBbox] = useState(null);
   const [updatedFields, setUpdatedFields] = useState({}); // Track bbox updates
+  const [reextractingField, setReextractingField] = useState(null); // Track which field is being re-extracted
   const [zoom, setZoom] = useState(1.0); // Zoom level (1.0 = 100%)
   const containerRef = useRef(null); // Document viewer reference (scrollable container)
   const transformerRef = useRef(null);
@@ -71,6 +72,75 @@ function AnnotationCanvas({ documentData }) {
       width: ((x2 - x1) / 1000) * pageWidth,
       height: ((y2 - y1) / 1000) * pageHeight,
     };
+  };
+
+  // Re-extract text from a specific bbox using OCR
+  const reextractTextFromBbox = async (field, newBbox) => {
+    try {
+      setReextractingField(field.id);
+      console.log(
+        `Re-extracting text for field ${field.label} from bbox:`,
+        newBbox
+      );
+
+      // Call the donut service to re-extract text
+      // In development, use relative URL or environment-specific URL
+      const isCodespace = window.location.hostname.includes("github.dev");
+      const donutServiceUrl = isCodespace
+        ? window.location.origin.replace("-3000.", "-3002.") + "/reextract-bbox"
+        : "http://localhost:3002/reextract-bbox";
+
+      console.log(`Calling Donut service at: ${donutServiceUrl}`);
+
+      const response = await fetch(donutServiceUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64,
+          format: mimeType === "application/pdf" ? "pdf" : "png",
+          bbox: newBbox,
+          page: field.page || currentPage,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Re-extraction failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.status === "success") {
+        const extractedText = result.text;
+        const confidence = result.confidence;
+
+        console.log(
+          `Re-extracted text: "${extractedText}" (confidence: ${confidence})`
+        );
+
+        // Update the field with new value and bbox
+        setUpdatedFields((prev) => ({
+          ...prev,
+          [field.id]: {
+            ...field,
+            value: extractedText,
+            bbox: newBbox,
+            confidence: confidence,
+          },
+        }));
+
+        return extractedText;
+      } else {
+        throw new Error(result.error || "Re-extraction failed");
+      }
+    } catch (error) {
+      console.error("Error re-extracting text:", error);
+      alert(`Failed to re-extract text: ${error.message}`);
+      return null;
+    } finally {
+      setReextractingField(null);
+    }
   };
 
   // Handle field selection
@@ -125,27 +195,51 @@ function AnnotationCanvas({ documentData }) {
   // Render field list item
   const renderFieldItem = (field, index) => {
     const isSelected = selectedField?.id === field.id;
-    const confidence = field.confidence || 0;
+    const isReextracting = reextractingField === field.id;
+    const updatedField = updatedFields[field.id];
+    const confidence = updatedField?.confidence || field.confidence || 0;
     const confidenceColor =
       confidence > 0.8 ? "high" : confidence > 0.5 ? "medium" : "low";
     const fieldLabel = field.label || field.field_name || `Field ${index + 1}`;
-    const fieldValue = field.value || "N/A";
+    const fieldValue = updatedField?.value || field.value || "N/A";
+    const hasBeenUpdated =
+      updatedField &&
+      (updatedField.value !== field.value ||
+        JSON.stringify(updatedField.bbox) !== JSON.stringify(field.bbox));
 
     return (
       <div
         key={field.id || index}
-        className={`field-item ${isSelected ? "selected" : ""}`}
+        className={`field-item ${isSelected ? "selected" : ""} ${
+          hasBeenUpdated ? "updated" : ""
+        }`}
         onClick={() => handleFieldClick(field)}
       >
         <div className="field-header">
-          <span className="field-name">{fieldLabel}</span>
+          <span className="field-name">
+            {fieldLabel}
+            {hasBeenUpdated && (
+              <span
+                className="update-indicator"
+                title="Value updated from bbox"
+              >
+                🔄
+              </span>
+            )}
+          </span>
           {confidence > 0 && (
             <span className={`confidence-badge badge-${confidenceColor}`}>
               {(confidence * 100).toFixed(0)}%
             </span>
           )}
         </div>
-        <div className="field-value text-muted">{fieldValue}</div>
+        <div className="field-value text-muted">
+          {isReextracting ? (
+            <span className="reextracting-indicator">⏳ Re-extracting...</span>
+          ) : (
+            fieldValue
+          )}
+        </div>
         {field.page && (
           <div className="field-meta text-muted">Page {field.page}</div>
         )}
@@ -309,26 +403,48 @@ function AnnotationCanvas({ documentData }) {
                       <div className="error-message">Failed to load PDF</div>
                     }
                   >
-                    <div
-                      className="page-wrapper"
-                      style={{
-                        transform: `scale(${zoom})`,
-                        transformOrigin: "top center",
-                        transition: "transform 0.3s ease-in-out",
-                      }}
-                    >
-                      <Page
-                        pageNumber={currentPage}
-                        onRenderSuccess={onPageRenderSuccess}
-                        renderTextLayer={true}
-                        renderAnnotationLayer={false}
-                        width={containerRef.current?.offsetWidth * 0.95 || 600}
-                      />
+                    <div className="page-wrapper">
+                      <div
+                        style={{
+                          transform: `scale(${zoom})`,
+                          transformOrigin: "top center",
+                          transition: "transform 0.3s ease-in-out",
+                          position: "relative",
+                        }}
+                      >
+                        <Page
+                          pageNumber={currentPage}
+                          onRenderSuccess={onPageRenderSuccess}
+                          renderTextLayer={true}
+                          renderAnnotationLayer={false}
+                          width={
+                            containerRef.current?.offsetWidth * 0.95 || 600
+                          }
+                        />
+                      </div>
 
-                      {/* Konva Overlay for Annotations */}
+                      {/* Konva Overlay for Annotations - Outside the scaled div */}
                       {pageWidth && pageHeight && (
-                        <div className="annotation-overlay">
-                          <Stage width={pageWidth} height={pageHeight}>
+                        <div
+                          className="annotation-overlay"
+                          style={{
+                            transform: `scale(${zoom})`,
+                            transformOrigin: "top center",
+                            transition: "transform 0.3s ease-in-out",
+                          }}
+                        >
+                          <Stage
+                            width={pageWidth}
+                            height={pageHeight}
+                            onMouseDown={(e) => {
+                              // Adjust for CSS transform scale
+                              const stage = e.target.getStage();
+                              const pointerPos = stage.getPointerPosition();
+                              if (pointerPos) {
+                                // Konva will handle the rest
+                              }
+                            }}
+                          >
                             <Layer>
                               {fields
                                 .filter((field) => {
@@ -367,9 +483,31 @@ function AnnotationCanvas({ documentData }) {
                                         }
                                         cornerRadius={4}
                                         draggable={true}
+                                        onDragMove={(e) => {
+                                          // Prevent drag from going outside bounds
+                                          const shape = e.target;
+                                          const x = shape.x();
+                                          const y = shape.y();
+                                          const width = shape.width();
+                                          const height = shape.height();
+
+                                          // Keep bbox within page bounds
+                                          shape.x(
+                                            Math.max(
+                                              0,
+                                              Math.min(pageWidth - width, x)
+                                            )
+                                          );
+                                          shape.y(
+                                            Math.max(
+                                              0,
+                                              Math.min(pageHeight - height, y)
+                                            )
+                                          );
+                                        }}
                                         onClick={() => handleFieldClick(field)}
                                         onTap={() => handleFieldClick(field)}
-                                        onDragEnd={(e) => {
+                                        onDragEnd={async (e) => {
                                           // Update bbox on drag
                                           const newX = e.target.x();
                                           const newY = e.target.y();
@@ -398,17 +536,14 @@ function AnnotationCanvas({ documentData }) {
                                             normalizedY2,
                                           ];
 
-                                          // Update state with new bbox
-                                          setUpdatedFields((prev) => ({
-                                            ...prev,
-                                            [field.id]: {
-                                              ...field,
-                                              bbox: newBbox,
-                                            },
-                                          }));
-
                                           console.log(
-                                            `Updated bbox for ${field.label}:`,
+                                            `Bbox moved for ${field.label}:`,
+                                            newBbox
+                                          );
+
+                                          // Re-extract text from new bbox location
+                                          await reextractTextFromBbox(
+                                            field,
                                             newBbox
                                           );
                                         }}
