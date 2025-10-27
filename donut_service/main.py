@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-LayoutLMv3 Document Understanding Service
-Standalone service for commercial invoice field extraction
+LayoutLM Document Question-Answering Service
+Standalone service for commercial invoice field extraction using Impira's pre-trained model
 Runs on port 3002, called by Lambda backend
 """
 
@@ -13,21 +13,19 @@ import base64
 import json
 from typing import Dict, Any, List
 from pathlib import Path
+from difflib import SequenceMatcher
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 from pdf2image import convert_from_path
-from transformers import LayoutLMv3Processor, LayoutLMv3ForTokenClassification
+from transformers import pipeline
 import torch
 import pytesseract
-import re
-from difflib import SequenceMatcher
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -36,64 +34,67 @@ app = Flask(__name__)
 CORS(app)
 
 # Global model variables (lazy loaded)
-_layoutlm_model = None
-_layoutlm_processor = None
+_doc_qa_pipeline = None
 
 
 def load_layoutlm_model():
-    """Load LayoutLMv3 model on first request (lazy loading)."""
-    global _layoutlm_model, _layoutlm_processor
-    
-    if _layoutlm_model is None:
-        logger.info("Loading LayoutLMv3 model (this may take 30-60 seconds)...")
+    """Load Impira LayoutLM model on first request (lazy loading)."""
+    global _doc_qa_pipeline
+
+    if _doc_qa_pipeline is None:
+        logger.info(
+            "Loading Impira LayoutLM invoice model (this may take 30-60 seconds)..."
+        )
         try:
-            # Use base model for invoice understanding
-            model_name = "microsoft/layoutlmv3-base"
-            _layoutlm_processor = LayoutLMv3Processor.from_pretrained(model_name, apply_ocr=False)
-            _layoutlm_model = LayoutLMv3ForTokenClassification.from_pretrained(model_name)
-            _layoutlm_model.eval()  # Set to evaluation mode
-            logger.info("✓ LayoutLMv3 model loaded successfully")
+            # Use Impira's pre-trained LayoutLM model for invoice Q&A
+            # This model is specifically fine-tuned on invoices
+            _doc_qa_pipeline = pipeline(
+                "document-question-answering", model="impira/layoutlm-invoices"
+            )
+            logger.info("✓ Impira LayoutLM invoice model loaded successfully")
         except Exception as e:
-            logger.error(f"Failed to load LayoutLMv3 model: {e}")
+            logger.error(f"Failed to load LayoutLM model: {e}")
             raise
-    
-    return _layoutlm_model, _layoutlm_processor
+
+    return _doc_qa_pipeline
 
 
 def perform_ocr_get_words(image_path: str) -> list:
     """
     Run Tesseract OCR to extract words with bounding boxes and confidences.
-    
+
     Returns:
         List of dicts: [{'text': 'word', 'bbox': [x,y,w,h], 'confidence': 0-100}, ...]
     """
     try:
         image = Image.open(image_path).convert("RGB")
-        
+
         # Run Tesseract with detailed data
         ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
-        
+
         words = []
-        n_boxes = len(ocr_data['text'])
+        n_boxes = len(ocr_data["text"])
         for i in range(n_boxes):
-            text = ocr_data['text'][i].strip()
-            conf = int(ocr_data['conf'][i])
-            
+            text = ocr_data["text"][i].strip()
+            conf = int(ocr_data["conf"][i])
+
             # Skip empty or low confidence
             if not text or conf < 0:
                 continue
-            
-            x = ocr_data['left'][i]
-            y = ocr_data['top'][i]
-            w = ocr_data['width'][i]
-            h = ocr_data['height'][i]
-            
-            words.append({
-                'text': text,
-                'bbox': [x, y, x + w, y + h],  # [x1, y1, x2, y2]
-                'confidence': conf / 100.0  # normalize to 0-1
-            })
-        
+
+            x = ocr_data["left"][i]
+            y = ocr_data["top"][i]
+            w = ocr_data["width"][i]
+            h = ocr_data["height"][i]
+
+            words.append(
+                {
+                    "text": text,
+                    "bbox": [x, y, x + w, y + h],  # [x1, y1, x2, y2]
+                    "confidence": conf / 100.0,  # normalize to 0-1
+                }
+            )
+
         logger.info(f"OCR extracted {len(words)} words")
         if words:
             logger.info(f"Sample OCR word (first): {words[0]}")
@@ -111,45 +112,46 @@ def perform_ocr_get_words(image_path: str) -> list:
 def extract_invoice_fields_ocr_only(ocr_words: list) -> list:
     """
     Extract invoice fields using OCR pattern matching (fallback when DocVQA fails).
-    
+
     Patterns:
     - Invoice number: INV-*, Invoice #*, etc.
     - Date: DD/MM/YYYY, MM-DD-YYYY
     - Total: after "Total:", "Amount Due:", "$"
     - Vendor: top 20% of document
     - Customer: after "Bill To:", "Customer:"
-    
+
     Args:
         ocr_words: List of OCR words with bboxes
-        
+
     Returns:
         List of extracted fields
     """
     fields = []
     field_id = 1
-    
+
     if not ocr_words:
         logger.warning("OCR returned no words")
         return fields
-    
+
     # Validate OCR word structure
     for word in ocr_words:
-        if not isinstance(word, dict) or 'text' not in word or 'bbox' not in word:
+        if not isinstance(word, dict) or "text" not in word or "bbox" not in word:
             logger.error(f"Invalid OCR word format: {word}")
             return fields
-    
+
     # Combine OCR words into full text for pattern matching
-    full_text = ' '.join([w['text'] for w in ocr_words])
+    full_text = " ".join([w["text"] for w in ocr_words])
     logger.info(f"Full OCR text sample (first 200 chars): {full_text[:200]}")
-    
+
     # Pattern 1: Invoice number (more flexible)
     import re
+
     inv_patterns = [
-        r'(?:Invoice\s*(?:No\.?|Number|#)?[:\s]*)?([A-Z]{2,4}[-\s]?\d{4,})',  # TLS-2024-001
-        r'(?:INV[-\s]?)(\d{4,})',  # INV-12345
-        r'#\s*([A-Z0-9-]{5,})',  # #ABC-123
+        r"(?:Invoice\s*(?:No\.?|Number|#)?[:\s]*)?([A-Z]{2,4}[-\s]?\d{4,})",  # TLS-2024-001
+        r"(?:INV[-\s]?)(\d{4,})",  # INV-12345
+        r"#\s*([A-Z0-9-]{5,})",  # #ABC-123
     ]
-    
+
     for pattern in inv_patterns:
         inv_match = re.search(pattern, full_text, re.IGNORECASE)
         if inv_match:
@@ -157,239 +159,291 @@ def extract_invoice_fields_ocr_only(ocr_words: list) -> list:
             logger.info(f"Found invoice number: {inv_num}")
             # Find matching OCR word
             for word in ocr_words:
-                if inv_num.lower() in word['text'].lower() or word['text'].lower() in inv_num.lower():
-                    fields.append({
-                        'id': field_id,
-                        'label': 'invoice_number',
-                        'value': inv_num,
-                        'bbox': word['bbox'],
-                        'confidence': word['confidence'],
-                        'source': 'ocr_pattern'
-                    })
+                if (
+                    inv_num.lower() in word["text"].lower()
+                    or word["text"].lower() in inv_num.lower()
+                ):
+                    fields.append(
+                        {
+                            "id": field_id,
+                            "label": "invoice_number",
+                            "value": inv_num,
+                            "bbox": word["bbox"],
+                            "confidence": word["confidence"],
+                            "source": "ocr_pattern",
+                        }
+                    )
                     field_id += 1
                     break
             break  # Stop after first match
-    
+
     # Pattern 2: Date (various formats) - improved
     date_patterns = [
-        r'\b(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4})\b',  # 01/15/2024, 15-01-24
-        r'\b(\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2})\b',  # 2024-01-15
-        r'\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})\b'  # 15 January 2024
+        r"\b(\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4})\b",  # 01/15/2024, 15-01-24
+        r"\b(\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2})\b",  # 2024-01-15
+        r"\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})\b",  # 15 January 2024
     ]
-    
+
     for pattern in date_patterns:
         for match in re.finditer(pattern, full_text, re.IGNORECASE):
             date_val = match.group(1)
             logger.info(f"Found date: {date_val}")
             for word in ocr_words:
                 # Match any part of the date
-                if any(part in word['text'] for part in date_val.replace('-', ' ').replace('/', ' ').split()):
-                    fields.append({
-                        'id': field_id,
-                        'label': 'invoice_date',
-                        'value': date_val,
-                        'bbox': word['bbox'],
-                        'confidence': word['confidence'],
-                        'source': 'ocr_pattern'
-                    })
+                if any(
+                    part in word["text"]
+                    for part in date_val.replace("-", " ").replace("/", " ").split()
+                ):
+                    fields.append(
+                        {
+                            "id": field_id,
+                            "label": "invoice_date",
+                            "value": date_val,
+                            "bbox": word["bbox"],
+                            "confidence": word["confidence"],
+                            "source": "ocr_pattern",
+                        }
+                    )
                     field_id += 1
                     break
             break  # Only first date
-        if any(f['label'] == 'invoice_date' for f in fields):
+        if any(f["label"] == "invoice_date" for f in fields):
             break
-    
+
     # Pattern 3: Total amount - improved for commercial invoices
     total_patterns = [
-        r'(?:Total|Amount\s+Due|Grand\s+Total|Invoice\s+Total)[:\s]*\$?\s*([\d,]+\.?\d{0,2})',
-        r'\$\s*([\d,]+\.\d{2})\s*(?:USD|EUR|GBP)?',  # $1,234.56 USD
-        r'(?:^|\s)(\d{1,3}(?:,\d{3})*\.\d{2})\s*(?:USD|EUR|GBP)',  # 1,234.56 USD
+        r"(?:Total|Amount\s+Due|Grand\s+Total|Invoice\s+Total)[:\s]*\$?\s*([\d,]+\.?\d{0,2})",
+        r"\$\s*([\d,]+\.\d{2})\s*(?:USD|EUR|GBP)?",  # $1,234.56 USD
+        r"(?:^|\s)(\d{1,3}(?:,\d{3})*\.\d{2})\s*(?:USD|EUR|GBP)",  # 1,234.56 USD
     ]
-    
+
     for pattern in total_patterns:
         total_match = re.search(pattern, full_text, re.IGNORECASE | re.MULTILINE)
         if total_match:
-            amount = total_match.group(1).replace(',', '')
+            amount = total_match.group(1).replace(",", "")
             logger.info(f"Found total amount: ${amount}")
             for word in ocr_words:
-                if amount in word['text'].replace(',', '') or word['text'].replace(',', '') in amount:
-                    fields.append({
-                        'id': field_id,
-                        'label': 'total_amount',
-                        'value': '$' + total_match.group(1),
-                        'bbox': word['bbox'],
-                        'confidence': word['confidence'],
-                        'source': 'ocr_pattern'
-                    })
+                if (
+                    amount in word["text"].replace(",", "")
+                    or word["text"].replace(",", "") in amount
+                ):
+                    fields.append(
+                        {
+                            "id": field_id,
+                            "label": "total_amount",
+                            "value": "$" + total_match.group(1),
+                            "bbox": word["bbox"],
+                            "confidence": word["confidence"],
+                            "source": "ocr_pattern",
+                        }
+                    )
                     field_id += 1
                     break
             break
-    
+
     logger.info(f"OCR pattern extraction found {len(fields)} fields")
     return fields
 
 
-def match_value_to_ocr_bbox(value: str, ocr_words: list, img_width: int, img_height: int) -> dict:
+def match_value_to_ocr_bbox(
+    value: str, ocr_words: list, img_width: int, img_height: int
+) -> dict:
     """
     Match extracted value to OCR words and return bbox + confidence.
-    
+
     Uses fuzzy matching to find value in OCR text and return merged bbox.
-    
+
     Returns:
         {'bbox': [x1, y1, x2, y2], 'confidence': float}
     """
     if not value or not ocr_words:
-        return {'bbox': [0, 0, 100, 100], 'confidence': 0.5}
-    
+        return {"bbox": [0, 0, 100, 100], "confidence": 0.5}
+
     value_lower = str(value).lower().strip()
-    
+
     # Try exact match first
     for word in ocr_words:
-        if word['text'].lower() == value_lower:
-            return {'bbox': word['bbox'], 'confidence': word['confidence']}
-    
+        if word["text"].lower() == value_lower:
+            return {"bbox": word["bbox"], "confidence": word["confidence"]}
+
     # Try partial/substring match
     matching_words = []
     for word in ocr_words:
-        if value_lower in word['text'].lower() or word['text'].lower() in value_lower:
+        if value_lower in word["text"].lower() or word["text"].lower() in value_lower:
             matching_words.append(word)
-    
+
     if matching_words:
         # Merge bboxes of matching words
-        x1 = min(w['bbox'][0] for w in matching_words)
-        y1 = min(w['bbox'][1] for w in matching_words)
-        x2 = max(w['bbox'][2] for w in matching_words)
-        y2 = max(w['bbox'][3] for w in matching_words)
-        avg_conf = sum(w['confidence'] for w in matching_words) / len(matching_words)
-        
-        return {'bbox': [x1, y1, x2, y2], 'confidence': avg_conf}
-    
+        x1 = min(w["bbox"][0] for w in matching_words)
+        y1 = min(w["bbox"][1] for w in matching_words)
+        x2 = max(w["bbox"][2] for w in matching_words)
+        y2 = max(w["bbox"][3] for w in matching_words)
+        avg_conf = sum(w["confidence"] for w in matching_words) / len(matching_words)
+
+        return {"bbox": [x1, y1, x2, y2], "confidence": avg_conf}
+
     # Try multi-word match (value contains multiple words)
     words_in_value = value_lower.split()
     if len(words_in_value) > 1:
         # Find sequence of OCR words that matches
-        ocr_texts = [w['text'].lower() for w in ocr_words]
-        ocr_combined = ' '.join(ocr_texts)
-        
+        ocr_texts = [w["text"].lower() for w in ocr_words]
+        ocr_combined = " ".join(ocr_texts)
+
         if value_lower in ocr_combined:
             # Find word indices
             start_idx = None
             for i in range(len(ocr_words)):
-                candidate = ' '.join(ocr_texts[i:i+len(words_in_value)])
+                candidate = " ".join(ocr_texts[i : i + len(words_in_value)])
                 if value_lower in candidate or candidate in value_lower:
                     start_idx = i
                     break
-            
+
             if start_idx is not None:
                 end_idx = min(start_idx + len(words_in_value), len(ocr_words))
                 matched = ocr_words[start_idx:end_idx]
-                
-                x1 = min(w['bbox'][0] for w in matched)
-                y1 = min(w['bbox'][1] for w in matched)
-                x2 = max(w['bbox'][2] for w in matched)
-                y2 = max(w['bbox'][3] for w in matched)
-                avg_conf = sum(w['confidence'] for w in matched) / len(matched)
-                
-                return {'bbox': [x1, y1, x2, y2], 'confidence': avg_conf}
-    
+
+                x1 = min(w["bbox"][0] for w in matched)
+                y1 = min(w["bbox"][1] for w in matched)
+                x2 = max(w["bbox"][2] for w in matched)
+                y2 = max(w["bbox"][3] for w in matched)
+                avg_conf = sum(w["confidence"] for w in matched) / len(matched)
+
+                return {"bbox": [x1, y1, x2, y2], "confidence": avg_conf}
+
     # No match found - return default
-    return {'bbox': [0, 0, 100, 100], 'confidence': 0.3}
+    return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
-def extract_invoice_fields_layoutlm(image_path: str, ocr_words: List[dict]) -> List[dict]:
+def extract_invoice_fields_layoutlm(image_path: str) -> List[dict]:
     """
-    Extract invoice fields using LayoutLMv3 + OCR.
-    
-    LayoutLMv3 approach:
-    1. Get OCR words with bboxes (already have from Tesseract)
-    2. Run LayoutLMv3 to classify tokens into entities
-    3. Map entity labels to invoice fields
-    4. Return structured fields with bboxes
-    
+    Extract invoice fields using Impira's LayoutLM document Q&A model.
+
+    This model is specifically fine-tuned on invoices and uses a question-answering
+    approach to extract fields. Much better than generic LayoutLMv3!
+
     Args:
-        image_path: Path to image
-        ocr_words: OCR words from Tesseract
-        
+        image_path: Path to the invoice image
+
     Returns:
-        List of extracted fields with bboxes
+        List of extracted fields with bboxes and confidence scores
     """
     try:
-        model, processor = load_layoutlm_model()
+        # Load model (lazy loading)
+        doc_qa = load_layoutlm_model()
+
+        # Open image
         image = Image.open(image_path).convert("RGB")
-        
-        # Prepare inputs for LayoutLMv3
-        # Convert OCR words to format expected by processor
-        words = [w['text'] for w in ocr_words]
-        boxes = [[int(c) for c in w['bbox']] for w in ocr_words]  # [x1, y1, x2, y2]
-        
-        # Normalize boxes to 0-1000 scale (LayoutLMv3 requirement)
         img_width, img_height = image.size
-        normalized_boxes = []
-        for box in boxes:
-            normalized_boxes.append([
-                int(1000 * box[0] / img_width),
-                int(1000 * box[1] / img_height),
-                int(1000 * box[2] / img_width),
-                int(1000 * box[3] / img_height)
-            ])
-        
-        # Encode
-        encoding = processor(
-            image,
-            words,
-            boxes=normalized_boxes,
-            return_tensors="pt",
-            truncation=True,
-            padding="max_length",
-            max_length=512
+
+        # Get OCR words with bboxes for matching
+        logger.info("Running OCR to get word bboxes...")
+        ocr_words = perform_ocr_get_words(image_path)
+        logger.info(f"OCR found {len(ocr_words)} words")
+
+        # Define questions for invoice fields
+        # REDUCED: Only ask for the most critical fields to avoid timeout
+        # Each question takes ~5-10 seconds on CPU, so limit to 5-6 fields max
+        questions = {
+            "invoice_number": "What is the invoice number?",
+            "invoice_date": "What is the invoice date?",
+            "total_amount": "What is the total amount?",
+            "vendor_name": "What is the vendor name?",
+            "po_number": "What is the PO number?",
+        }
+
+        fields = []
+        field_id = 1
+
+        logger.info(
+            f"Extracting fields using LayoutLM Q&A for {len(questions)} questions..."
         )
-        
-        # Run inference
-        with torch.no_grad():
-            outputs = model(**encoding)
-            predictions = outputs.logits.argmax(-1).squeeze().tolist()
-        
-        # Map predictions to fields
-        # For now, use OCR pattern matching since we don't have fine-tuned model
-        logger.info("LayoutLMv3 loaded but using OCR patterns (model needs fine-tuning for invoices)")
-        return extract_invoice_fields_ocr_only(ocr_words)
-        
+
+        for field_label, question in questions.items():
+            try:
+                # Ask the question to the document
+                result = doc_qa(image=image, question=question)
+
+                # Result format: [{'score': 0.95, 'answer': 'INV-12345', 'start': 10, 'end': 10}]
+                if result:
+                    answer_data = result[0] if isinstance(result, list) else result
+
+                    answer = answer_data.get("answer", "").strip()
+                    confidence = answer_data.get("score", 0.0)
+
+                    # Only include if confidence is reasonable and answer is not empty
+                    if answer and confidence > 0.1:
+                        # Match the answer text to OCR words to get bbox
+                        bbox_match = match_value_to_ocr_bbox(
+                            answer, ocr_words, img_width, img_height
+                        )
+                        bbox = bbox_match.get("bbox", [0, 0, img_width // 4, 30])
+
+                        # Use OCR confidence if available, otherwise use model confidence
+                        final_confidence = max(
+                            confidence, bbox_match.get("confidence", 0.0)
+                        )
+
+                        fields.append(
+                            {
+                                "id": field_id,
+                                "label": field_label,
+                                "value": answer,
+                                "bbox": bbox,
+                                "confidence": float(final_confidence),
+                                "source": "layoutlm_qa",
+                            }
+                        )
+                        field_id += 1
+                        logger.info(
+                            f"✓ {field_label}: {answer} (confidence: {confidence:.2f}, bbox: {bbox})"
+                        )
+                    else:
+                        logger.debug(f"✗ {field_label}: Low confidence or empty answer")
+
+            except Exception as e:
+                logger.warning(f"Failed to extract {field_label}: {e}")
+                continue
+
+        logger.info(f"LayoutLM Q&A extracted {len(fields)} fields")
+        return fields
+
     except Exception as e:
-        logger.warning(f"LayoutLMv3 failed, using OCR fallback: {e}")
-        return extract_invoice_fields_ocr_only(ocr_words)
+        logger.error(f"LayoutLM extraction failed: {e}", exc_info=True)
+        return []
 
 
 def group_words_into_lines(ocr_words: list, image_height: int) -> list:
     """
     Group OCR words into lines based on vertical proximity.
-    
+
     Words on the same line typically have similar Y coordinates.
     This groups words like addresses into single fields.
-    
+
     Args:
         ocr_words: List of OCR words with bbox
         image_height: Image height for threshold calculation
-        
+
     Returns:
         List of grouped lines with merged text and bbox
     """
     if not ocr_words:
         return []
-    
+
     # Sort words by Y position (top to bottom), then X (left to right)
-    sorted_words = sorted(ocr_words, key=lambda w: (w['bbox'][1], w['bbox'][0]))
-    
+    sorted_words = sorted(ocr_words, key=lambda w: (w["bbox"][1], w["bbox"][0]))
+
     lines = []
     current_line = []
     line_threshold = max(10, image_height * 0.01)  # 1% of image height or 10px
-    
+
     for word in sorted_words:
         if not current_line:
             current_line.append(word)
         else:
             # Check if word is on same line (similar Y coordinate)
-            prev_y = current_line[-1]['bbox'][1]  # Y1 of previous word
-            curr_y = word['bbox'][1]
-            
+            prev_y = current_line[-1]["bbox"][1]  # Y1 of previous word
+            curr_y = word["bbox"][1]
+
             if abs(curr_y - prev_y) < line_threshold:
                 # Same line
                 current_line.append(word)
@@ -398,11 +452,11 @@ def group_words_into_lines(ocr_words: list, image_height: int) -> list:
                 if current_line:
                     lines.append(merge_line_words(current_line))
                 current_line = [word]
-    
+
     # Add last line
     if current_line:
         lines.append(merge_line_words(current_line))
-    
+
     return lines
 
 
@@ -410,39 +464,40 @@ def merge_line_words(words: list) -> dict:
     """Merge words in a line into single field with combined bbox."""
     if not words:
         return None
-    
+
     # Combine text
-    text = ' '.join([w['text'] for w in words])
-    
+    text = " ".join([w["text"] for w in words])
+
     # Merge bboxes
-    x1 = min(w['bbox'][0] for w in words)
-    y1 = min(w['bbox'][1] for w in words)
-    x2 = max(w['bbox'][2] for w in words)
-    y2 = max(w['bbox'][3] for w in words)
-    
+    x1 = min(w["bbox"][0] for w in words)
+    y1 = min(w["bbox"][1] for w in words)
+    x2 = max(w["bbox"][2] for w in words)
+    y2 = max(w["bbox"][3] for w in words)
+
     # Average confidence
-    avg_conf = sum(w['confidence'] for w in words) / len(words)
-    
+    avg_conf = sum(w["confidence"] for w in words) / len(words)
+
     return {
-        'text': text,
-        'bbox': [x1, y1, x2, y2],
-        'confidence': avg_conf,
-        'word_count': len(words)
+        "text": text,
+        "bbox": [x1, y1, x2, y2],
+        "confidence": avg_conf,
+        "word_count": len(words),
     }
 
 
 def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
     """
-    Extract document fields using LayoutLMv3 + Tesseract OCR.
-    
-    Strategy:
-    1. Run OCR to get all text + bboxes
-    2. Use LayoutLMv3 for entity recognition on invoice fields
-    3. Fallback to OCR patterns if LayoutLMv3 fails
-    
+    Extract invoice fields using Impira LayoutLM Document Q&A model.
+
+    New Strategy (LayoutLM Q&A):
+    - Use pre-trained invoice model that handles OCR internally
+    - Ask specific questions about invoice fields
+    - Get answers with bounding boxes automatically
+    - Much simpler and more accurate than previous OCR+token-classification approach
+
     Args:
         image_path: Path to image file
-        
+
     Returns:
         Dictionary with extracted fields and bounding boxes
     """
@@ -450,115 +505,75 @@ def extract_fields_with_donut(image_path: str) -> Dict[str, Any]:
         # Load image
         image = Image.open(image_path).convert("RGB")
         image_width, image_height = image.size
-        
+
         logger.info(f"Image loaded: {image_width}x{image_height}")
-        
-        # Step 1: Run OCR to get all words with bboxes
-        ocr_words = perform_ocr_get_words(image_path)
-        logger.info(f"OCR extracted {len(ocr_words)} words")
-        
-        # DEBUG: Check OCR word structure
-        if ocr_words:
-            logger.info(f"DEBUG - First OCR word: {ocr_words[0]}")
-            logger.info(f"DEBUG - OCR word type: {type(ocr_words[0])}")
-            if isinstance(ocr_words[0], dict):
-                logger.info(f"DEBUG - Keys: {list(ocr_words[0].keys())}")
-        else:
-            logger.error("DEBUG - OCR returned empty list!")
-        
-        # Step 2: Try LayoutLMv3 extraction
-        layoutlm_fields = []
-        try:
-            logger.info("Attempting LayoutLMv3 extraction...")
-            layoutlm_fields = extract_invoice_fields_layoutlm(image_path, ocr_words)
-            logger.info(f"LayoutLMv3 extracted {len(layoutlm_fields)} invoice fields")
-        except Exception as layoutlm_error:
-            logger.warning(f"LayoutLMv3 failed, using OCR patterns: {layoutlm_error}")
-            layoutlm_fields = extract_invoice_fields_ocr_only(ocr_words)
-            logger.info(f"OCR pattern fallback extracted {len(layoutlm_fields)} fields")
-        
-        # Group nearby OCR words into lines (for addresses, descriptions, etc.)
-        grouped_lines = group_words_into_lines(ocr_words, image_height)
-        logger.info(f"Grouped {len(ocr_words)} words into {len(grouped_lines)} lines")
-        
-        # Add high-confidence grouped lines as fields
-        all_fields = layoutlm_fields.copy()
-        
-        for idx, line in enumerate(grouped_lines[:15]):  # Top 15 lines
-            # Skip if this line is already in extracted fields
-            line_text = line['text']
-            if any(line_text.lower() in f.get('value', '').lower() or f.get('value', '').lower() in line_text.lower() for f in layoutlm_fields):
-                continue
-            
-            if line['confidence'] > 0.7 and len(line_text) > 3:
-                all_fields.append({
-                    'id': len(all_fields) + 1,
-                    'label': f"line_{idx + 1}",
-                    'value': line_text,
-                    'bbox': line['bbox'],
-                    'confidence': line['confidence'],
-                    'source': 'ocr_line'
-                })
-        
-        logger.info(f"Total fields: {len(all_fields)} (AI + OCR lines)")
-        
+
+        # Extract invoice fields using LayoutLM Q&A
+        # This handles OCR internally, no need for Tesseract
+        layoutlm_fields = extract_invoice_fields_layoutlm(image_path)
+        logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
+
         # Normalize bboxes to 0-1000 scale (frontend expects this)
-        for field in all_fields:
-            if 'bbox' in field and field['bbox']:
-                x1, y1, x2, y2 = field['bbox']
-                field['bbox'] = [
+        for field in layoutlm_fields:
+            if "bbox" in field and field["bbox"]:
+                x1, y1, x2, y2 = field["bbox"]
+                field["bbox"] = [
                     int(1000 * x1 / image_width),
                     int(1000 * y1 / image_height),
                     int(1000 * x2 / image_width),
-                    int(1000 * y2 / image_height)
+                    int(1000 * y2 / image_height),
                 ]
-        
-        mode = 'layoutlmv3' if layoutlm_fields and layoutlm_fields[0].get('source') == 'layoutlmv3' else 'ocr_pattern'
-        
+
         return {
-            'raw_output': {'mode': mode, 'ai_fields': len(layoutlm_fields), 'total_words': len(ocr_words)},
-            'fields': all_fields,
-            'image_size': {'width': image_width, 'height': image_height}
+            "raw_output": {
+                "mode": "layoutlm_qa",
+                "model": "impira/layoutlm-invoices",
+                "ai_fields": len(layoutlm_fields),
+            },
+            "fields": layoutlm_fields,
+            "image_size": {"width": image_width, "height": image_height},
         }
-        
+
     except Exception as e:
         logger.error(f"Field extraction failed: {e}")
         raise
 
 
-def convert_donut_to_standard_format(donut_result: Dict, img_width: int, img_height: int) -> list:
+def convert_donut_to_standard_format(
+    donut_result: Dict, img_width: int, img_height: int
+) -> list:
     """
     Convert Donut output to standardized field format.
-    
+
     Since CORD model is trained on receipts, not invoices, we extract what we can
     and rely on OCR matching to provide accurate bboxes.
-    
+
     Args:
         donut_result: Raw Donut output (may be receipt-like fields)
         img_width: Image width for bbox normalization
         img_height: Image height for bbox normalization
-        
+
     Returns:
         List of field dictionaries with default bboxes (OCR will fix them)
     """
     fields = []
     field_id = 1
-    
+
     # Improved mapping: CORD receipt fields → Invoice concepts
     field_mapping = {
-        'nm': 'description',          # "name" → description
-        'price': 'amount',             # price
-        'discountprice': 'unit_price', # discount price
-        'cnt': 'quantity',             # count
-        'menu': 'line_items',          # menu items → line items
-        'total': 'total_amount',
-        'subtotal': 'subtotal',
-        'tax': 'tax_amount',
-        'store_name': 'vendor',
-        'store_addr': 'address',
-        'date': 'invoice_date',
+        "nm": "description",  # "name" → description
+        "price": "amount",  # price
+        "discountprice": "unit_price",  # discount price
+        "cnt": "quantity",  # count
+        "menu": "line_items",  # menu items → line items
+        "total": "total_amount",
+        "subtotal": "subtotal",
+        "tax": "tax_amount",
+        "store_name": "vendor",
+        "store_addr": "address",
+        "date": "invoice_date",
     }
-    
+
     def normalize_bbox(bbox, img_w, img_h):
         """Normalize bbox to [0-1000] scale."""
         if not bbox or len(bbox) != 4:
@@ -568,30 +583,32 @@ def convert_donut_to_standard_format(donut_result: Dict, img_width: int, img_hei
             int((x1 / img_w) * 1000),
             int((y1 / img_h) * 1000),
             int((x2 / img_w) * 1000),
-            int((y2 / img_h) * 1000)
+            int((y2 / img_h) * 1000),
         ]
-    
-    def extract_field(key, value, parent_key=''):
+
+    def extract_field(key, value, parent_key=""):
         """Recursively extract fields from nested structure."""
         nonlocal field_id
-        
+
         full_key = f"{parent_key}.{key}" if parent_key else key
         mapped_name = field_mapping.get(full_key, full_key)
-        
+
         if isinstance(value, dict):
             # Handle nested objects
-            if 'text' in value or 'value' in value:
+            if "text" in value or "value" in value:
                 # Leaf node with text
-                text = value.get('text') or value.get('value', '')
-                bbox = value.get('bounding_box', value.get('bbox', []))
-                
-                fields.append({
-                    'id': field_id,
-                    'label': mapped_name,
-                    'value': str(text),
-                    'bbox': normalize_bbox(bbox, img_width, img_height),
-                    'confidence': value.get('confidence', 0.9)
-                })
+                text = value.get("text") or value.get("value", "")
+                bbox = value.get("bounding_box", value.get("bbox", []))
+
+                fields.append(
+                    {
+                        "id": field_id,
+                        "label": mapped_name,
+                        "value": str(text),
+                        "bbox": normalize_bbox(bbox, img_width, img_height),
+                        "confidence": value.get("confidence", 0.9),
+                    }
+                )
                 field_id += 1
             else:
                 # Recurse into nested dict
@@ -605,38 +622,44 @@ def convert_donut_to_standard_format(donut_result: Dict, img_width: int, img_hei
                     for k, v in item.items():
                         extract_field(k, v, item_key)
                 else:
-                    fields.append({
-                        'id': field_id,
-                        'label': f"{mapped_name}_{idx+1}",
-                        'value': str(item),
-                        'bbox': [0, 0, 100, 100],
-                        'confidence': 0.8
-                    })
+                    fields.append(
+                        {
+                            "id": field_id,
+                            "label": f"{mapped_name}_{idx+1}",
+                            "value": str(item),
+                            "bbox": [0, 0, 100, 100],
+                            "confidence": 0.8,
+                        }
+                    )
                     field_id += 1
         else:
             # Simple value
-            fields.append({
-                'id': field_id,
-                'label': mapped_name,
-                'value': str(value),
-                'bbox': [0, 0, 100, 100],
-                'confidence': 0.85
-            })
+            fields.append(
+                {
+                    "id": field_id,
+                    "label": mapped_name,
+                    "value": str(value),
+                    "bbox": [0, 0, 100, 100],
+                    "confidence": 0.85,
+                }
+            )
             field_id += 1
-    
+
     # Process all top-level fields
     for key, value in donut_result.items():
         extract_field(key, value)
-    
+
     return fields
 
 
-def match_field_to_ocr(field: Dict[str, Any], ocr_entries: list, img_w: int, img_h: int) -> Dict[str, Any]:
+def match_field_to_ocr(
+    field: Dict[str, Any], ocr_entries: list, img_w: int, img_h: int
+) -> Dict[str, Any]:
     """Match a Donut field value to the best OCR entry and return field enriched with bbox and confidence.
 
     If no good match is found, preserve existing bbox.
     """
-    value = (field.get('value') or '').strip()
+    value = (field.get("value") or "").strip()
     if not value or not ocr_entries:
         return field
 
@@ -646,17 +669,17 @@ def match_field_to_ocr(field: Dict[str, Any], ocr_entries: list, img_w: int, img
     best = None
     best_score = 0.0
     for e in ocr_entries:
-        score = SequenceMatcher(None, target, e['text'].lower()).ratio()
+        score = SequenceMatcher(None, target, e["text"].lower()).ratio()
         if score > best_score:
             best_score = score
             best = e
 
     # If best score is reasonable, use its bbox; otherwise keep existing
     if best and best_score > 0.45:
-        x1 = best['left']
-        y1 = best['top']
-        x2 = x1 + best['width']
-        y2 = y1 + best['height']
+        x1 = best["left"]
+        y1 = best["top"]
+        x2 = x1 + best["width"]
+        y2 = y1 + best["height"]
 
         # Normalize to [0,1000]
         nx1 = int((x1 / img_w) * 1000)
@@ -665,42 +688,46 @@ def match_field_to_ocr(field: Dict[str, Any], ocr_entries: list, img_w: int, img
         ny2 = int((y2 / img_h) * 1000)
 
         # Confidence: combine Donut confidence (if present) and OCR conf
-        donut_conf = field.get('confidence', 0.5)
-        ocr_conf = (best.get('conf', 0.0) / 100.0) if best.get('conf') is not None else 0.0
+        donut_conf = field.get("confidence", 0.5)
+        ocr_conf = (
+            (best.get("conf", 0.0) / 100.0) if best.get("conf") is not None else 0.0
+        )
         combined_conf = round(min(1.0, max(0.0, (donut_conf + ocr_conf) / 2.0)), 3)
 
         new_field = dict(field)
-        new_field['bbox'] = [nx1, ny1, nx2, ny2]
-        new_field['confidence'] = combined_conf
-        new_field['matched_ocr'] = best['text']
-        new_field['match_score'] = round(best_score, 3)
+        new_field["bbox"] = [nx1, ny1, nx2, ny2]
+        new_field["confidence"] = combined_conf
+        new_field["matched_ocr"] = best["text"]
+        new_field["match_score"] = round(best_score, 3)
         return new_field
 
     # No good match
     return field
 
 
-@app.route('/health', methods=['GET'])
+@app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'service': 'layoutlmv3-extraction',
-        'model_loaded': _layoutlm_model is not None
-    })
+    return jsonify(
+        {
+            "status": "healthy",
+            "service": "layoutlm-invoice-qa",
+            "model_loaded": _doc_qa_pipeline is not None,
+        }
+    )
 
 
-@app.route('/extract', methods=['POST'])
+@app.route("/extract", methods=["POST"])
 def extract_document():
     """
     Extract fields from document (image or PDF).
-    
+
     Request body:
         {
             "image": "base64-encoded-document-data",
             "format": "png|jpg|jpeg|pdf"
         }
-    
+
     Returns:
         {
             "status": "success",
@@ -711,82 +738,75 @@ def extract_document():
     """
     try:
         data = request.get_json()
-        
-        if not data or 'image' not in data:
-            return jsonify({'error': 'Missing image data'}), 400
-        
+
+        if not data or "image" not in data:
+            return jsonify({"error": "Missing image data"}), 400
+
         # Decode base64 document
-        doc_data = base64.b64decode(data['image'])
-        doc_format = data.get('format', 'png').lower()
-        
+        doc_data = base64.b64decode(data["image"])
+        doc_format = data.get("format", "png").lower()
+
         # Save to temp file
-        with tempfile.NamedTemporaryFile(suffix=f'.{doc_format}', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:
             tmp.write(doc_data)
             tmp_path = tmp.name
-        
+
         try:
             # Convert PDF to image if needed
-            if doc_format == 'pdf':
+            if doc_format == "pdf":
                 logger.info(f"Converting PDF to image ({len(doc_data)} bytes)")
                 images = convert_from_path(tmp_path, first_page=1, last_page=1, dpi=200)
-                
+
                 if not images:
-                    return jsonify({'error': 'PDF has no pages'}), 400
-                
+                    return jsonify({"error": "PDF has no pages"}), 400
+
                 # Save first page as PNG
-                img_path = tmp_path.replace('.pdf', '.png')
-                images[0].save(img_path, 'PNG')
-                
+                img_path = tmp_path.replace(".pdf", ".png")
+                images[0].save(img_path, "PNG")
+
                 # Delete PDF, use image
                 os.unlink(tmp_path)
                 tmp_path = img_path
-                logger.info(f"PDF converted to {images[0].width}x{images[0].height} PNG")
-            
+                logger.info(
+                    f"PDF converted to {images[0].width}x{images[0].height} PNG"
+                )
+
             # Extract fields
             result = extract_fields_with_donut(tmp_path)
-            
+
             logger.info(f"Returning {len(result.get('fields', []))} fields to client")
-            if result.get('fields'):
+            if result.get("fields"):
                 logger.info(f"Sample field: {result['fields'][0]}")
-            
-            return jsonify({
-                'status': 'success',
-                **result
-            })
+
+            return jsonify({"status": "success", **result})
         finally:
             # Cleanup
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-    
+
     except Exception as e:
         logger.error(f"Extraction error: {e}", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def index():
     """Root endpoint."""
-    return jsonify({
-        'service': 'Donut Document Understanding Service',
-        'version': '1.0.0',
-        'endpoints': {
-            '/health': 'Health check',
-            '/extract': 'Extract fields from document (POST with base64 image)'
+    return jsonify(
+        {
+            "service": "Donut Document Understanding Service",
+            "version": "1.0.0",
+            "endpoints": {
+                "/health": "Health check",
+                "/extract": "Extract fields from document (POST with base64 image)",
+            },
         }
-    })
+    )
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 3002))
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 3002))
     logger.info(f"Starting Donut service on port {port}")
     logger.info("Note: Model will be loaded on first request (may take 30-60s)")
-    
-    app.run(
-        host='0.0.0.0',
-        port=port,
-        debug=False,
-        threaded=True
-    )
+
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

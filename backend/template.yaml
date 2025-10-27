@@ -1,13 +1,13 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   MD-Copilot IDP Backend
-  
+
   Serverless backend for Interactive Document Processing with OCR and LayoutML
 
 Globals:
   Function:
-    Timeout: 180
+    Timeout: 300 # 5 minutes - LayoutLM Q&A on CPU can take 30-60s for 5 fields
     MemorySize: 2048
     Tracing: Active
   Api:
@@ -24,14 +24,14 @@ Resources:
       CodeUri: src/process_document/
       Handler: app.lambda_handler
       MemorySize: 2048
-      Timeout: 180
+      Timeout: 300 # 5 minutes for LayoutLM Q&A processing
       EphemeralStorage:
-        Size: 10240  # 10 GB - Maximum allowed for GDPR-compliant processing
+        Size: 10240 # 10 GB - Maximum allowed for GDPR-compliant processing
       Environment:
         Variables:
           LOG_LEVEL: INFO
           PYTHONUNBUFFERED: 1
-          DONUT_SERVICE_URL: 'http://172.17.0.1:3002'
+          DONUT_SERVICE_URL: "http://172.17.0.1:3002"
       Events:
         ProcessDocument:
           Type: HttpApi
@@ -42,30 +42,30 @@ Resources:
             PayloadFormatVersion: "2.0"
       Policies:
         - Statement:
-          - Sid: CloudWatchLogsPolicy
-            Effect: Allow
-            Action:
-              - logs:CreateLogGroup
-              - logs:CreateLogStream
-              - logs:PutLogEvents
-            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+            - Sid: CloudWatchLogsPolicy
+              Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
 
   # CloudWatch Log Group for Lambda function
   OcrProcessorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/aws/lambda/${OcrProcessorFunction}'
+      LogGroupName: !Sub "/aws/lambda/${OcrProcessorFunction}"
       RetentionInDays: 7
 
 Outputs:
   OcrProcessorApi:
     Description: "API Gateway endpoint URL for ProcessDocument function"
     Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/process-document"
-  
+
   OcrProcessorFunction:
     Description: "OCR Processor Lambda Function ARN"
     Value: !GetAtt OcrProcessorFunction.Arn
-  
+
   OcrProcessorFunctionIamRole:
     Description: "IAM Role for OCR Processor function"
     Value: !GetAtt OcrProcessorFunctionRole.Arn

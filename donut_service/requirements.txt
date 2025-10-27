@@ -2,9 +2,13 @@
 Flask>=2.3.0
 flask-cors>=4.0.0
 
-# LayoutLMv3 model dependencies (CPU-only for development)
+# LayoutLM Document Q&A model (impira/layoutlm-invoices)
+# This model is pre-trained on invoices and uses Q&A instead of token classification
 transformers>=4.30.0
 torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
 Pillow>=10.0.0
 pdf2image>=1.16.3
+
+# Note: pytesseract is optional - LayoutLM handles OCR internally
+# Kept for potential fallback scenarios
 pytesseract>=0.3.10
