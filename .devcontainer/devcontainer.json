@@ -8,23 +8,19 @@
     "ghcr.io/devcontainers/features/node:1": {
       "version": "18"
     },
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "version": "latest",
-      "moby": false
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
     },
     "ghcr.io/devcontainers/features/aws-cli:1": {
       "version": "latest"
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "containerEnv": {
-    "DOCKER_HOST": "unix:///var/run/docker.sock"
-  },
   "runArgs": [
-    "--init"
-  ],
-  "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    "--init",
+    "--privileged"
   ],
   "customizations": {
     "vscode": {

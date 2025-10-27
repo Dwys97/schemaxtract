@@ -3,10 +3,6 @@ set -e
 
 echo "🚀 Setting up MD-Copilot IDP Development Environment..."
 
-# Fix Docker socket permissions for the vscode user
-echo "🐳 Setting up Docker permissions..."
-sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
-
 # Install system dependencies (as root if needed)
 echo "📦 Installing system dependencies..."
 sudo apt-get update
