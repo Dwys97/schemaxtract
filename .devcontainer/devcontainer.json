@@ -1,16 +1,32 @@
 {
   "name": "MD-Copilot IDP Development Container",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
   
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
       "version": "18"
     },
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
-    "ghcr.io/devcontainers/features/aws-cli:1": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    },
+    "ghcr.io/devcontainers/features/aws-cli:1": {
+      "version": "latest"
+    }
   },
 
   "postCreateCommand": "bash .devcontainer/setup.sh",
+  
+  "runArgs": [
+    "--init"
+  ],
+  
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
 
   "customizations": {
     "vscode": {
@@ -19,25 +35,31 @@
         "ms-python.vscode-pylance",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
+        "ms-python.black-formatter",
         "GitHub.copilot",
         "GitHub.copilot-chat",
         "amazonwebservices.aws-toolkit-vscode"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "python.linting.enabled": true,
-        "python.linting.pylintEnabled": false,
-        "python.formatting.provider": "black",
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
         "[python]": {
-          "editor.defaultFormatter": "ms-python.python"
+          "editor.defaultFormatter": "ms-python.black-formatter"
+        },
+        "[javascript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[javascriptreact]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        },
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
         }
       }
     }
   },
 
-  "forwardPorts": [3000, 3001],
+  "forwardPorts": [3000, 3001, 3002],
   "portsAttributes": {
     "3000": {
       "label": "Frontend (Vite)",
@@ -45,6 +67,10 @@
     },
     "3001": {
       "label": "Backend (SAM Local)",
+      "onAutoForward": "notify"
+    },
+    "3002": {
+      "label": "Donut Service",
       "onAutoForward": "notify"
     }
   },
