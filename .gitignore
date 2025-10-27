@@ -49,3 +49,4 @@ frontend/.vite/
 venv/
 env/
 ENV/
+*.whl
