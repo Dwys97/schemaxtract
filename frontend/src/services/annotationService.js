@@ -104,58 +104,35 @@ class AnnotationService {
   }
 
   /**
-   * Export annotation as JSON
+   * Export annotation as JSON (fields and values only)
    */
   exportAsJSON(annotation) {
-    const data = {
-      document: annotation.documentName,
-      reviewed: new Date(annotation.reviewDate).toISOString(),
-      fields: annotation.fields.map((f) => ({
-        field: f.label,
-        value: f.value,
-        confidence: f.confidence,
-        bbox: f.bbox,
-      })),
-      metadata: annotation.metadata,
-    };
+    const data = {};
+
+    // Convert fields array to key-value pairs
+    annotation.fields.forEach((field) => {
+      data[field.label] = field.value || "";
+    });
 
     return JSON.stringify(data, null, 2);
   }
 
   /**
-   * Export annotation as CSV
+   * Export annotation as CSV (fields and values only)
    */
   exportAsCSV(annotation) {
-    const rows = [
-      [
-        "Field",
-        "Value",
-        "Confidence",
-        "BBox X1",
-        "BBox Y1",
-        "BBox X2",
-        "BBox Y2",
-      ],
-    ];
+    const rows = [["Field", "Value"]];
 
     annotation.fields.forEach((field) => {
-      const bbox = field.bbox || [0, 0, 0, 0];
-      rows.push([
-        field.label,
-        field.value,
-        field.confidence?.toFixed(2) || "0.00",
-        bbox[0],
-        bbox[1],
-        bbox[2],
-        bbox[3],
-      ]);
+      rows.push([field.label, field.value || ""]);
     });
 
     return rows.map((row) => row.join(",")).join("\n");
   }
 
   /**
-   * Export annotation as ROSSUMXML format
+   * Export annotation as structured XML format
+   * Only exports extracted field values, no metadata or bboxes
    */
   exportAsXML(annotation) {
     const escapeXml = (str) => {
@@ -168,41 +145,37 @@ class AnnotationService {
         .replace(/'/g, "&apos;");
     };
 
-    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-    xml += "<document>\n";
-    xml += `  <metadata>\n`;
-    xml += `    <filename>${escapeXml(annotation.documentName)}</filename>\n`;
-    xml += `    <reviewed>${new Date(
-      annotation.reviewDate
-    ).toISOString()}</reviewed>\n`;
-    xml += `    <engine>${escapeXml(
-      annotation.metadata?.ocr_engine || "unknown"
-    )}</engine>\n`;
-    xml += `    <model>${escapeXml(
-      annotation.metadata?.model || "unknown"
-    )}</model>\n`;
-    xml += `  </metadata>\n`;
-    xml += `  <fields>\n`;
+    // Helper to get field value by label
+    const getFieldValue = (label) => {
+      const field = annotation.fields.find(
+        (f) => f.label.toLowerCase() === label.toLowerCase()
+      );
+      return field ? escapeXml(field.value) : "";
+    };
 
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += "<Document>\n";
+
+    // Group fields by category for better structure
+    // We'll organize similar to the DataFreight structure but generic
+
+    // Iterate through all fields and create nested structure based on field names
     annotation.fields.forEach((field) => {
-      const bbox = field.bbox || [0, 0, 0, 0];
-      xml += `    <field>\n`;
-      xml += `      <label>${escapeXml(field.label)}</label>\n`;
-      xml += `      <value>${escapeXml(field.value)}</value>\n`;
-      xml += `      <confidence>${
-        field.confidence?.toFixed(2) || "0.00"
-      }</confidence>\n`;
-      xml += `      <bbox>\n`;
-      xml += `        <x1>${bbox[0]}</x1>\n`;
-      xml += `        <y1>${bbox[1]}</y1>\n`;
-      xml += `        <x2>${bbox[2]}</x2>\n`;
-      xml += `        <y2>${bbox[3]}</y2>\n`;
-      xml += `      </bbox>\n`;
-      xml += `    </field>\n`;
+      const label = field.label;
+      const value = escapeXml(field.value);
+
+      if (!value) return; // Skip empty fields
+
+      // Convert label to XML-friendly tag name (replace spaces, special chars)
+      const tagName = label
+        .replace(/[^a-zA-Z0-9_]/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .replace(/_+/g, "_");
+
+      xml += `  <${tagName}>${value}</${tagName}>\n`;
     });
 
-    xml += `  </fields>\n`;
-    xml += "</document>";
+    xml += "</Document>";
 
     return xml;
   }

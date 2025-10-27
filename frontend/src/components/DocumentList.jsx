@@ -460,6 +460,27 @@ function DocumentList({
                       {doc.status === "confirmed" && (
                         <>
                           <button
+                            className="review-btn"
+                            onClick={() => onStatusChange(doc.id, "to_review")}
+                            title="Send back for review"
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M11 17l-5-5m0 0l5-5m-5 5h12"
+                              />
+                            </svg>
+                            Review
+                          </button>
+                          <button
                             className="export-btn export-json"
                             onClick={() => handleExport(doc, "json")}
                             title="Export as JSON"
@@ -535,20 +556,37 @@ function DocumentList({
 
       {/* Info Modal */}
       {selectedDocForInfo && (
-        <div className="info-modal-overlay" onClick={() => setSelectedDocForInfo(null)}>
-          <div className="info-modal-container" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="info-modal-overlay"
+          onClick={() => setSelectedDocForInfo(null)}
+        >
+          <div
+            className="info-modal-container"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="info-modal-header">
               <h3>📄 {selectedDocForInfo.filename}</h3>
-              <button 
+              <button
                 className="modal-close-btn"
                 onClick={() => setSelectedDocForInfo(null)}
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
-            
+
             <div className="info-modal-body">
               {/* Metadata Section */}
               <div className="info-section">
@@ -556,21 +594,33 @@ function DocumentList({
                 <div className="info-grid">
                   <div className="info-item">
                     <span className="info-label">Uploaded:</span>
-                    <span className="info-value">{new Date(selectedDocForInfo.uploadedAt).toLocaleString()}</span>
+                    <span className="info-value">
+                      {new Date(selectedDocForInfo.uploadedAt).toLocaleString()}
+                    </span>
                   </div>
                   {selectedDocForInfo.updatedAt && (
                     <div className="info-item">
                       <span className="info-label">Reviewed:</span>
-                      <span className="info-value">{new Date(selectedDocForInfo.updatedAt).toLocaleString()}</span>
+                      <span className="info-value">
+                        {new Date(
+                          selectedDocForInfo.updatedAt
+                        ).toLocaleString()}
+                      </span>
                     </div>
                   )}
                   <div className="info-item">
                     <span className="info-label">MIME Type:</span>
-                    <span className="info-value">{selectedDocForInfo.mimeType || 'N/A'}</span>
+                    <span className="info-value">
+                      {selectedDocForInfo.mimeType || "N/A"}
+                    </span>
                   </div>
                   <div className="info-item">
                     <span className="info-label">Status:</span>
-                    <span className={`status-badge ${getStatusBadgeClass(selectedDocForInfo.status)}`}>
+                    <span
+                      className={`status-badge ${getStatusBadgeClass(
+                        selectedDocForInfo.status
+                      )}`}
+                    >
                       {getStatusText(selectedDocForInfo.status)}
                     </span>
                   </div>
@@ -579,7 +629,9 @@ function DocumentList({
 
               {/* Extracted Fields Section */}
               <div className="info-section">
-                <h4>Extracted Fields ({selectedDocForInfo.fields?.length || 0})</h4>
+                <h4>
+                  Extracted Fields ({selectedDocForInfo.fields?.length || 0})
+                </h4>
                 <div className="fields-table-wrapper">
                   <table className="fields-info-table">
                     <thead>
@@ -591,23 +643,33 @@ function DocumentList({
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedDocForInfo.fields && selectedDocForInfo.fields.length > 0 ? (
+                      {selectedDocForInfo.fields &&
+                      selectedDocForInfo.fields.length > 0 ? (
                         selectedDocForInfo.fields.map((field, index) => (
                           <tr key={index}>
                             <td className="field-label-col">{field.label}</td>
-                            <td className="field-value-col">{field.value || '-'}</td>
+                            <td className="field-value-col">
+                              {field.value || "-"}
+                            </td>
                             <td className="field-confidence-col">
-                              <span className={`confidence-badge ${
-                                field.confidence >= 0.8 ? 'high' :
-                                field.confidence >= 0.5 ? 'medium' : 'low'
-                              }`}>
+                              <span
+                                className={`confidence-badge ${
+                                  field.confidence >= 0.8
+                                    ? "high"
+                                    : field.confidence >= 0.5
+                                    ? "medium"
+                                    : "low"
+                                }`}
+                              >
                                 {((field.confidence || 0) * 100).toFixed(0)}%
                               </span>
                             </td>
                             <td className="field-bbox-col">
-                              {field.bbox 
-                                ? `[${field.bbox.map(n => Math.round(n)).join(', ')}]`
-                                : '-'}
+                              {field.bbox
+                                ? `[${field.bbox
+                                    .map((n) => Math.round(n))
+                                    .join(", ")}]`
+                                : "-"}
                             </td>
                           </tr>
                         ))
@@ -627,41 +689,74 @@ function DocumentList({
               <div className="info-section">
                 <h4>Export Options</h4>
                 <div className="export-actions">
-                  <button 
+                  <button
                     className="btn-export-modal export-json"
                     onClick={() => {
-                      handleExport(selectedDocForInfo, 'json');
+                      handleExport(selectedDocForInfo, "json");
                       setSelectedDocForInfo(null);
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"
+                      />
                     </svg>
                     Export as JSON
                   </button>
-                  <button 
+                  <button
                     className="btn-export-modal export-csv"
                     onClick={() => {
-                      handleExport(selectedDocForInfo, 'csv');
+                      handleExport(selectedDocForInfo, "csv");
                       setSelectedDocForInfo(null);
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"
+                      />
                     </svg>
                     Export as CSV
                   </button>
-                  <button 
+                  <button
                     className="btn-export-modal export-xml"
                     onClick={() => {
-                      handleExport(selectedDocForInfo, 'xml');
+                      handleExport(selectedDocForInfo, "xml");
                       setSelectedDocForInfo(null);
                     }}
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"
+                      />
                     </svg>
-                    Export as ROSSUMXML
+                    Export as XML
                   </button>
                 </div>
               </div>
