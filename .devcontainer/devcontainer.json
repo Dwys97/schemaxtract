@@ -18,6 +18,7 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/set-port-visibility.sh",
   "runArgs": [
     "--init",
     "--privileged"
@@ -60,15 +61,18 @@
   "portsAttributes": {
     "3000": {
       "label": "Frontend (Vite)",
-      "onAutoForward": "notify"
+      "onAutoForward": "notify",
+      "visibility": "public"
     },
     "3001": {
       "label": "Backend (SAM Local)",
-      "onAutoForward": "notify"
+      "onAutoForward": "notify",
+      "visibility": "public"
     },
     "3002": {
       "label": "Donut Service",
-      "onAutoForward": "notify"
+      "onAutoForward": "notify",
+      "visibility": "public"
     }
   },
   "remoteUser": "vscode"
