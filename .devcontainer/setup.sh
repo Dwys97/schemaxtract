@@ -20,7 +20,12 @@ sudo apt-get install -y \
     libgomp1 \
     ffmpeg \
     libgl1-mesa-glx \
+    git-lfs \
     && sudo rm -rf /var/lib/apt/lists/*
+
+# Initialize Git LFS
+echo "🔧 Setting up Git LFS..."
+git lfs install --local 2>/dev/null || true
 
 # Install AWS SAM CLI
 echo "📦 Installing AWS SAM CLI..."
