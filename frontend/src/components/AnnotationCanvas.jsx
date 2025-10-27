@@ -840,7 +840,7 @@ function AnnotationCanvas({ documentData }) {
                       {/* Confirmation Popup - positioned next to bbox */}
                       {pendingReextraction && (
                         <div
-                          className="bbox-popup glass-card-elevated"
+                          className="bbox-popup"
                           style={{
                             position: "absolute",
                             left: (() => {
@@ -849,7 +849,7 @@ function AnnotationCanvas({ documentData }) {
                               );
                               if (!pixels) return "50%";
                               const popupX =
-                                (pixels.x + pixels.width) * zoom + 10;
+                                (pixels.x + pixels.width) * zoom + 1;
                               return `${popupX}px`;
                             })(),
                             top: (() => {
