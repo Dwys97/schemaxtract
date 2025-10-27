@@ -35,7 +35,7 @@
     {
       "label": "Start Donut Service",
       "type": "shell",
-      "command": "cd donut_service && ([ -d venv ] || python3 -m venv venv) && source venv/bin/activate && pip install -q -r requirements.txt && python main.py",
+      "command": "cd donut_service && ([ -f venv/bin/python3 ] || (rm -rf venv && python3 -m venv venv)) && source venv/bin/activate && pip install -q --upgrade pip && pip install -q -r requirements.txt && python main.py",
       "isBackground": true,
       "problemMatcher": {
         "pattern": {
