@@ -4,30 +4,28 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  
   "features": {
     "ghcr.io/devcontainers/features/node:1": {
       "version": "18"
     },
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
       "version": "latest",
-      "moby": true
+      "moby": false
     },
     "ghcr.io/devcontainers/features/aws-cli:1": {
       "version": "latest"
     }
   },
-
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  
+  "containerEnv": {
+    "DOCKER_HOST": "unix:///var/run/docker.sock"
+  },
   "runArgs": [
     "--init"
   ],
-  
   "mounts": [
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
-
   "customizations": {
     "vscode": {
       "extensions": [
@@ -58,8 +56,11 @@
       }
     }
   },
-
-  "forwardPorts": [3000, 3001, 3002],
+  "forwardPorts": [
+    3000,
+    3001,
+    3002
+  ],
   "portsAttributes": {
     "3000": {
       "label": "Frontend (Vite)",
@@ -74,6 +75,5 @@
       "onAutoForward": "notify"
     }
   },
-
   "remoteUser": "vscode"
 }
