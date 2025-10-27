@@ -4,7 +4,7 @@
     {
       "label": "Start Backend (SAM Local)",
       "type": "shell",
-      "command": "cd backend && sam build --use-container && sam local start-api --port 3001 --host 0.0.0.0",
+      "command": "cd backend && sam build && sam local start-api --port 3001 --host 0.0.0.0",
       "isBackground": true,
       "problemMatcher": {
         "pattern": {
@@ -94,7 +94,7 @@
     {
       "label": "Build Backend Only",
       "type": "shell",
-      "command": "cd backend && sam build --use-container",
+      "command": "cd backend && sam build",
       "presentation": {
         "echo": true,
         "reveal": "always",

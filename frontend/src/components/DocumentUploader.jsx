@@ -205,12 +205,39 @@ function DocumentUploader({ onDocumentProcessed }) {
         {loading ? (
           <>
             <span className="spinner"></span>
-            Processing...
+            Processing with DocVQA (30-60s)...
           </>
         ) : (
           'Process Document'
         )}
       </button>
+
+      {/* Loading Details - показывается во время обработки */}
+      {loading && (
+        <div className="loading-details">
+          <div className="loading-steps">
+            <div className="loading-step">
+              <span className="step-icon">📄</span>
+              <span>Converting PDF to image...</span>
+            </div>
+            <div className="loading-step">
+              <span className="step-icon">🔍</span>
+              <span>Running OCR (Tesseract)...</span>
+            </div>
+            <div className="loading-step active">
+              <span className="step-icon">🤖</span>
+              <span>DocVQA asking questions (invoice number, date, total, vendor, customer)...</span>
+            </div>
+            <div className="loading-step">
+              <span className="step-icon">📦</span>
+              <span>Matching answers to bounding boxes...</span>
+            </div>
+          </div>
+          <p className="loading-note">
+            ⏱️ DocVQA model inference takes 30-90 seconds. Please wait...
+          </p>
+        </div>
+      )}
     </div>
   );
 }

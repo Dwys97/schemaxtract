@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
-import { Stage, Layer, Rect, Text as KonvaText } from 'react-konva';
+import { Stage, Layer, Rect, Text as KonvaText, Line, Transformer } from 'react-konva';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import './AnnotationCanvas.css';
@@ -25,7 +25,11 @@ function AnnotationCanvas({ documentData }) {
   const [selectedField, setSelectedField] = useState(null);
   const [pageWidth, setPageWidth] = useState(0);
   const [pageHeight, setPageHeight] = useState(0);
+  const [editingBbox, setEditingBbox] = useState(null);
+  const [updatedFields, setUpdatedFields] = useState({}); // Track bbox updates
   const containerRef = useRef(null);
+  const transformerRef = useRef(null);
+  const fieldsPaneRef = useRef(null);
 
   // Extract fields from document data
   const fields = documentData?.fields || [];
@@ -63,7 +67,8 @@ function AnnotationCanvas({ documentData }) {
 
   // Handle field selection
   const handleFieldClick = (field) => {
-    setSelectedField(field.field_name === selectedField?.field_name ? null : field);
+    const fieldKey = field.label || field.field_name || field.id;
+    setSelectedField(selectedField?.id === field.id ? null : field);
     
     // Navigate to the page containing the field if needed
     if (field.page && field.page !== currentPage) {
@@ -73,26 +78,70 @@ function AnnotationCanvas({ documentData }) {
 
   // Render field list item
   const renderFieldItem = (field, index) => {
-    const isSelected = selectedField?.field_name === field.field_name;
+    const isSelected = selectedField?.id === field.id;
     const confidence = field.confidence || 0;
     const confidenceColor = confidence > 0.8 ? 'high' : confidence > 0.5 ? 'medium' : 'low';
+    const fieldLabel = field.label || field.field_name || `Field ${index + 1}`;
+    const fieldValue = field.value || 'N/A';
 
     return (
       <div
-        key={index}
+        key={field.id || index}
         className={`field-item ${isSelected ? 'selected' : ''}`}
         onClick={() => handleFieldClick(field)}
       >
         <div className="field-header">
-          <span className="field-name">{field.field_name}</span>
-          <span className={`confidence-badge badge-${confidenceColor}`}>
-            {(confidence * 100).toFixed(0)}%
-          </span>
+          <span className="field-name">{fieldLabel}</span>
+          {confidence > 0 && (
+            <span className={`confidence-badge badge-${confidenceColor}`}>
+              {(confidence * 100).toFixed(0)}%
+            </span>
+          )}
         </div>
-        <div className="field-value text-muted">{field.value || 'N/A'}</div>
+        <div className="field-value text-muted">{fieldValue}</div>
         {field.page && (
           <div className="field-meta text-muted">
             Page {field.page}
+          </div>
+        )}
+        {field.bbox && field.bbox.some(v => v > 0) && (
+          <div className="field-meta text-muted">
+            📍 Has location
+          </div>
+        )}
+        {isSelected && (
+          <div className="field-actions">
+            <button 
+              className="btn-action btn-accept"
+              onClick={(e) => {
+                e.stopPropagation();
+                const finalField = updatedFields[field.id] || field;
+                console.log(`Accepted field: ${field.label}`, finalField);
+                alert(`✓ Field "${field.label}" accepted\nValue: ${finalField.value}\nBbox: ${JSON.stringify(finalField.bbox)}`);
+              }}
+            >
+              ✓ Accept
+            </button>
+            <button 
+              className="btn-action btn-edit"
+              onClick={(e) => {
+                e.stopPropagation();
+                const newValue = prompt(`Edit value for "${field.label}":`, field.value);
+                if (newValue !== null) {
+                  field.value = newValue;
+                  setUpdatedFields(prev => ({
+                    ...prev,
+                    [field.id]: {
+                      ...(prev[field.id] || field),
+                      value: newValue
+                    }
+                  }));
+                  console.log(`Updated field: ${field.label} = ${newValue}`);
+                }
+              }}
+            >
+              ✏ Edit
+            </button>
           </div>
         )}
       </div>
@@ -182,15 +231,22 @@ function AnnotationCanvas({ documentData }) {
                           <Stage width={pageWidth} height={pageHeight}>
                             <Layer>
                               {fields
-                                .filter(field => field.page === currentPage && field.bbox)
+                                .filter(field => {
+                                  // Show field if: has bbox AND (no page specified OR matches current page)
+                                  const hasPage = field.page !== undefined;
+                                  const matchesPage = !hasPage || field.page === currentPage;
+                                  return field.bbox && matchesPage;
+                                })
                                 .map((field, index) => {
-                                  const pixels = normalizedToPixels(field.bbox);
+                                  // Use updated bbox if available, otherwise original
+                                  const currentBbox = updatedFields[field.id]?.bbox || field.bbox;
+                                  const pixels = normalizedToPixels(currentBbox);
                                   if (!pixels) return null;
 
-                                  const isSelected = selectedField?.field_name === field.field_name;
+                                  const isSelected = selectedField?.id === field.id;
 
                                   return (
-                                    <React.Fragment key={index}>
+                                    <React.Fragment key={field.id || index}>
                                       <Rect
                                         x={pixels.x}
                                         y={pixels.y}
@@ -200,11 +256,66 @@ function AnnotationCanvas({ documentData }) {
                                         strokeWidth={isSelected ? 3 : 2}
                                         fill={isSelected ? 'rgba(29, 114, 243, 0.15)' : 'rgba(52, 199, 89, 0.1)'}
                                         cornerRadius={4}
+                                        draggable={true}
                                         onClick={() => handleFieldClick(field)}
                                         onTap={() => handleFieldClick(field)}
+                                        onDragEnd={(e) => {
+                                          // Update bbox on drag
+                                          const newX = e.target.x();
+                                          const newY = e.target.y();
+                                          const width = e.target.width();
+                                          const height = e.target.height();
+                                          
+                                          // Convert back to normalized coordinates
+                                          const normalizedX1 = Math.round((newX / pageWidth) * 1000);
+                                          const normalizedY1 = Math.round((newY / pageHeight) * 1000);
+                                          const normalizedX2 = Math.round(((newX + width) / pageWidth) * 1000);
+                                          const normalizedY2 = Math.round(((newY + height) / pageHeight) * 1000);
+                                          
+                                          const newBbox = [normalizedX1, normalizedY1, normalizedX2, normalizedY2];
+                                          
+                                          // Update state with new bbox
+                                          setUpdatedFields(prev => ({
+                                            ...prev,
+                                            [field.id]: {
+                                              ...field,
+                                              bbox: newBbox
+                                            }
+                                          }));
+                                          
+                                          console.log(`Updated bbox for ${field.label}:`, newBbox);
+                                        }}
+                                        onTransformEnd={(e) => {
+                                          // Handle resize
+                                          const node = e.target;
+                                          const scaleX = node.scaleX();
+                                          const scaleY = node.scaleY();
+                                          
+                                          // Reset scale
+                                          node.scaleX(1);
+                                          node.scaleY(1);
+                                          
+                                          const newWidth = node.width() * scaleX;
+                                          const newHeight = node.height() * scaleY;
+                                          
+                                          const normalizedX1 = Math.round((node.x() / pageWidth) * 1000);
+                                          const normalizedY1 = Math.round((node.y() / pageHeight) * 1000);
+                                          const normalizedX2 = Math.round(((node.x() + newWidth) / pageWidth) * 1000);
+                                          const normalizedY2 = Math.round(((node.y() + newHeight) / pageHeight) * 1000);
+                                          
+                                          const newBbox = [normalizedX1, normalizedY1, normalizedX2, normalizedY2];
+                                          
+                                          setUpdatedFields(prev => ({
+                                            ...prev,
+                                            [field.id]: {
+                                              ...field,
+                                              bbox: newBbox
+                                            }
+                                          }));
+                                        }}
                                         onMouseEnter={(e) => {
                                           const container = e.target.getStage().container();
-                                          container.style.cursor = 'pointer';
+                                          container.style.cursor = 'move';
                                         }}
                                         onMouseLeave={(e) => {
                                           const container = e.target.getStage().container();

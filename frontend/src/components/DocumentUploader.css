@@ -138,7 +138,57 @@
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-top-color: var(--text-primary);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 1s linear infinite;
+}
+
+/* Loading Details */
+.loading-details {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--bg-field);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.loading-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.loading-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  transition: all 0.3s ease;
+}
+
+.loading-step.active {
+  background: rgba(29, 114, 243, 0.1);
+  color: var(--accent-blue);
+  border-left: 3px solid var(--accent-blue);
+}
+
+.loading-step .step-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.loading-note {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+  padding: 12px;
+  background: rgba(255, 204, 0, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid var(--warning);
 }
 
 @keyframes spin {

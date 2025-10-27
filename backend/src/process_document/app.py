@@ -3,8 +3,7 @@ import base64
 import os
 import tempfile
 import logging
-from typing import List, Dict, Any
-from PIL import Image
+from typing import Dict, Any
 from pdf2image import convert_from_path
 import requests
 
@@ -16,35 +15,30 @@ logger.setLevel(logging.INFO)
 DONUT_SERVICE_URL = os.environ.get('DONUT_SERVICE_URL', 'http://localhost:3002')
 
 
-def call_donut_service(image_path: str) -> Dict[str, Any]:
+def call_donut_service(document_data: bytes, file_format: str) -> Dict[str, Any]:
     """
     Call external Donut service for field extraction.
     
     Args:
-        image_path: Path to image file
+        document_data: Raw document bytes
+        file_format: Document format (png, jpg, pdf)
         
     Returns:
         Dictionary with extracted fields
     """
     try:
-        # Read image and encode to base64
-        with open(image_path, 'rb') as f:
-            image_data = base64.b64encode(f.read()).decode('utf-8')
-        
-        # Determine format
-        ext = os.path.splitext(image_path)[1].lower().lstrip('.')
-        if ext not in ['png', 'jpg', 'jpeg']:
-            ext = 'png'
+        # Encode document to base64
+        doc_base64 = base64.b64encode(document_data).decode('utf-8')
         
         # Call Donut service
         logger.info(f"Calling Donut service at {DONUT_SERVICE_URL}/extract")
         response = requests.post(
             f"{DONUT_SERVICE_URL}/extract",
             json={
-                'image': image_data,
-                'format': ext
+                'image': doc_base64,
+                'format': file_format
             },
-            timeout=60  # Donut inference can take time
+            timeout=180  # DocVQA + OCR can take 60-90 seconds
         )
         
         if response.status_code != 200:
@@ -64,48 +58,14 @@ def call_donut_service(image_path: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Donut service call failed: {e}")
         raise
-        'date': 'invoice_date',
-        'tid': 'invoice_number',
-    }
-    
-    for donut_key, standard_key in field_mapping.items():
-        if donut_key in donut_result:
-            value = donut_result[donut_key]
-            
-            # Handle line items (for customs invoices)
-            if donut_key == 'menu' and isinstance(value, list):
-                for idx, item in enumerate(value):
-                    # Extract item fields
-                    item_fields = {
-                        'field_name': f'{standard_key}_{idx}',
-                        'value': item.get('nm', '') if isinstance(item, dict) else str(item),
-                        'confidence': 0.92,
-                        'bbox': [100, 200 + (idx * 50), 900, 240 + (idx * 50)],  # Simulated line item positions
-                        'page': 1,
-                        'item_data': item if isinstance(item, dict) else {}
-                    }
-                    fields.append(item_fields)
-            else:
-                # Single field
-                fields.append({
-                    'field_name': standard_key,
-                    'value': str(value),
-                    'confidence': 0.94,
-                    'bbox': [150, 100, 400, 140],  # Simulated position
-                    'page': 1
-                })
-    
-    return fields
 
 
 def lambda_handler(event, context):
     """
     AWS Lambda handler for document processing with Donut.
     
-    Processes documents (PDF, images) and extracts structured fields using Donut model.
+    Processes documents (PDF, images) and extracts structured fields using Donut service.
     """
-    temp_file_path = None
-    
     try:
         # Parse request body
         body = json.loads(event.get('body', '{}'))
@@ -128,51 +88,17 @@ def lambda_handler(event, context):
         # Decode Base64 document
         document_binary = base64.b64decode(base64_document)
         
-        # Determine file extension
-        extension = '.pdf'
+        # Determine file format
+        file_format = 'pdf'
         if 'image/png' in mime_type:
-            extension = '.png'
+            file_format = 'png'
         elif 'image/jpeg' in mime_type or 'image/jpg' in mime_type:
-            extension = '.jpg'
+            file_format = 'jpg'
         
-        # Write to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, dir='/tmp', suffix=extension) as temp_file:
-            temp_file.write(document_binary)
-            temp_file_path = temp_file.name
+        logger.info(f"Document size: {len(document_binary)} bytes, format: {file_format}")
         
-        logger.info(f"Document written to {temp_file_path} ({len(document_binary)} bytes)")
-        
-        # Convert PDF to image if needed
-        if extension == '.pdf':
-            try:
-                logger.info("Converting PDF first page to image...")
-                # Convert PDF to images using pdf2image (poppler-utils)
-                images = convert_from_path(temp_file_path, first_page=1, last_page=1, dpi=200)
-                
-                if images:
-                    # Save first page as PNG
-                    img_path = temp_file_path.replace('.pdf', '.png')
-                    images[0].save(img_path, 'PNG')
-                    
-                    # Delete PDF, use image
-                    os.unlink(temp_file_path)
-                    temp_file_path = img_path
-                    logger.info(f"PDF converted to image: {images[0].width}x{images[0].height}")
-                else:
-                    raise ValueError("PDF has no pages")
-            except Exception as pdf_error:
-                logger.error(f"PDF conversion error: {pdf_error}")
-                return {
-                    'statusCode': 400,
-                    'headers': {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*'
-                    },
-                    'body': json.dumps({'error': f'Failed to process PDF: {str(pdf_error)}'})
-                }
-        
-        # Call Donut service for field extraction
-        donut_result = call_donut_service(temp_file_path)
+        # Call Donut service for field extraction (handles PDF conversion internally)
+        donut_result = call_donut_service(document_binary, file_format)
         
         # Extract fields and metadata from service response
         fields = donut_result.get('fields', [])
@@ -222,15 +148,6 @@ def lambda_handler(event, context):
                 'message': str(e)
             })
         }
-    
-    finally:
-        # Cleanup temp file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-                logger.info(f"Cleaned up: {temp_file_path}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup: {cleanup_error}")
 
 
 # For local testing

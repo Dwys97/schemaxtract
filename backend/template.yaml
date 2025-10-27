@@ -7,7 +7,7 @@ Description: >
 
 Globals:
   Function:
-    Timeout: 90
+    Timeout: 180
     MemorySize: 2048
     Tracing: Active
   Api:
@@ -20,17 +20,18 @@ Resources:
   OcrProcessorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      PackageType: Image
-      ImageUri: ocr-processor:latest
+      Runtime: python3.12
+      CodeUri: src/process_document/
+      Handler: app.lambda_handler
       MemorySize: 2048
-      Timeout: 90
+      Timeout: 180
       EphemeralStorage:
         Size: 10240  # 10 GB - Maximum allowed for GDPR-compliant processing
       Environment:
         Variables:
           LOG_LEVEL: INFO
           PYTHONUNBUFFERED: 1
-          DONUT_MODEL_NAME: 'naver-clova-ix/donut-base-finetuned-cord-v2'
+          DONUT_SERVICE_URL: 'http://172.17.0.1:3002'
       Events:
         ProcessDocument:
           Type: HttpApi
@@ -48,10 +49,6 @@ Resources:
               - logs:CreateLogStream
               - logs:PutLogEvents
             Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
-    Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: ../
-      DockerTag: python3.11-v1
 
   # CloudWatch Log Group for Lambda function
   OcrProcessorLogGroup:

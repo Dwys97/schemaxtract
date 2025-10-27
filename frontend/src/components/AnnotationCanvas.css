@@ -323,6 +323,52 @@
   }
 }
 
+/* Field Actions */
+.field-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.btn-action {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.btn-accept {
+  background: var(--accent-green);
+  color: white;
+}
+
+.btn-accept:hover {
+  background: #28a745;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(52, 199, 89, 0.3);
+}
+
+.btn-edit {
+  background: var(--accent-blue);
+  color: white;
+}
+
+.btn-edit:hover {
+  background: var(--accent-blue-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(29, 114, 243, 0.3);
+}
+
 /* React-PDF Overrides for Dark Theme */
 .react-pdf__Page__canvas {
   max-width: 100%;

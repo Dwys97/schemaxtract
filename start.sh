@@ -59,11 +59,10 @@ echo ""
 # Create log directory
 mkdir -p logs
 
-# Start SAM Backend (with integrated Donut)
-echo -e "${BLUE}🚀 Starting SAM Backend with Donut (port 3001)...${NC}"
-echo -e "${YELLOW}⏳ Building Docker container (first time may take 5-10 minutes)...${NC}"
+# Start SAM Backend (with Donut service integration)
+echo -e "${BLUE}🚀 Starting SAM Backend (port 3001)...${NC}"
 cd backend
-sam build --use-container > ../logs/sam-build.log 2>&1
+sam build > ../logs/sam-build.log 2>&1
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ Backend built successfully${NC}"
     sam local start-api --port 3001 --host 0.0.0.0 > ../logs/backend.log 2>&1 &
@@ -97,20 +96,21 @@ echo -e "${GREEN}║          🎉 All Services Running!         ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}📊 Service Status:${NC}"
-echo -e "  ${GREEN}•${NC} Backend (Donut): http://localhost:3001"
+echo -e "  ${GREEN}•${NC} Backend:         http://localhost:3001"
+echo -e "  ${GREEN}•${NC} Donut Service:   http://localhost:3002"
 echo -e "  ${GREEN}•${NC} Frontend:        http://localhost:3000"
 echo ""
 echo -e "${BLUE}📝 Logs:${NC}"
 echo -e "  ${YELLOW}•${NC} Backend:  tail -f logs/backend.log"
 echo -e "  ${YELLOW}•${NC} Frontend: tail -f logs/frontend.log"
 echo ""
-echo -e "${BLUE}🤖 Donut Model:${NC}"
-echo -e "  ${YELLOW}•${NC} Integrated in Lambda (no separate service)"
-echo -e "  ${YELLOW}•${NC} End-to-end document understanding"
+echo -e "${BLUE}🤖 Donut Service:${NC}"
+echo -e "  ${YELLOW}•${NC} Separate Flask service for ML inference"
+echo -e "  ${YELLOW}•${NC} Backend proxies requests to Donut"
 echo ""
 echo -e "${BLUE}🛑 To stop all services:${NC}"
 echo -e "  make stop"
-echo -e "  OR: pkill -f 'sam local|vite'"
+echo -e "  OR: pkill -f 'sam local|vite|python.*donut'"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to exit (services will continue running in background)${NC}"
 echo ""
