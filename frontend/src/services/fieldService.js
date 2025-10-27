@@ -441,16 +441,16 @@ class FieldService {
    */
   getFieldsAsQuestions() {
     const fields = this.getAllFields();
-    console.log('[FieldService] All fields from storage:', fields);
-    
+    console.log("[FieldService] All fields from storage:", fields);
+
     const questions = fields.map((field) => ({
       field_key: field.key,
       question: field.question,
       required: field.required,
       type: field.type,
     }));
-    
-    console.log('[FieldService] Formatted as questions:', questions);
+
+    console.log("[FieldService] Formatted as questions:", questions);
     return questions;
   }
 

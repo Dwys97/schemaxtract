@@ -43,7 +43,7 @@ def call_donut_service(
             logger.info(f"Payload custom_fields: {json.dumps(custom_fields, indent=2)}")
         else:
             logger.info("No custom_fields to add to payload")
-        
+
         logger.info(f"Payload keys being sent to Donut: {list(payload.keys())}")
 
         # Call Donut service

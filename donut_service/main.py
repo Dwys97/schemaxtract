@@ -363,12 +363,14 @@ def extract_invoice_fields_layoutlm(
             "vendor_name": "What is the vendor name?",
             "po_number": "What is the PO number?",
         }
-        
+
         # Add or override with custom fields if provided
         if custom_fields:
-            logger.info(f"Adding {len(custom_fields)} custom field definitions to defaults")
+            logger.info(
+                f"Adding {len(custom_fields)} custom field definitions to defaults"
+            )
             logger.info(f"Custom fields received: {custom_fields}")
-            
+
             for field in custom_fields:
                 field_key = field.get("key") or field.get("field_key")
                 question = field.get("question")
@@ -780,8 +782,10 @@ def extract_document():
     """
     try:
         data = request.get_json()
-        
-        logger.info(f"[/extract] Received request with keys: {list(data.keys()) if data else 'None'}")
+
+        logger.info(
+            f"[/extract] Received request with keys: {list(data.keys()) if data else 'None'}"
+        )
 
         if not data or "image" not in data:
             return jsonify({"error": "Missing image data"}), 400
@@ -790,11 +794,13 @@ def extract_document():
         doc_data = base64.b64decode(data["image"])
         doc_format = data.get("format", "png").lower()
         custom_fields = data.get("custom_fields")  # Optional custom field definitions
-        
+
         logger.info(f"[/extract] custom_fields parameter: {custom_fields}")
         if custom_fields:
             logger.info(f"[/extract] Number of custom fields: {len(custom_fields)}")
-            logger.info(f"[/extract] Custom fields detail: {json.dumps(custom_fields, indent=2)}")
+            logger.info(
+                f"[/extract] Custom fields detail: {json.dumps(custom_fields, indent=2)}"
+            )
         else:
             logger.info("[/extract] No custom_fields in request")
 
