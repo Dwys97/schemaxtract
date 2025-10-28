@@ -32,17 +32,30 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Configure CORS with more permissive settings for GitHub Codespaces
 CORS(
     app,
     resources={
         r"/*": {
             "origins": "*",
-            "methods": ["GET", "POST", "OPTIONS"],
-            "allow_headers": ["Content-Type"],
-            "supports_credentials": True,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "Accept"],
+            "expose_headers": ["Content-Type"],
+            "supports_credentials": False,  # Changed to False for wildcard origins
+            "max_age": 3600,
         }
     },
 )
+
+# Add additional CORS headers for all responses
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Max-Age', '3600')
+    return response
 
 # Global model variables (lazy loaded)
 _doc_qa_pipeline = None

@@ -19,6 +19,9 @@ import "react-pdf/dist/Page/TextLayer.css";
 import "./AnnotationCanvas.css";
 import templateService from "../services/templateService";
 
+// Donut service URL - use Vite proxy to avoid CORS issues
+const DONUT_SERVICE_URL = "/donut";
+
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
@@ -400,11 +403,8 @@ function AnnotationCanvas({ documentData }) {
       );
 
       // Call the donut service to re-extract text
-      // In development, use relative URL or environment-specific URL
-      const isCodespace = window.location.hostname.includes("github.dev");
-      const donutServiceUrl = isCodespace
-        ? window.location.origin.replace("-3000.", "-3002.") + "/reextract-bbox"
-        : "http://localhost:3002/reextract-bbox";
+      // Use Vite proxy to avoid CORS issues in Codespaces
+      const donutServiceUrl = `${DONUT_SERVICE_URL}/reextract-bbox`;
 
       console.log(`Calling Donut service at: ${donutServiceUrl}`);
 
@@ -557,13 +557,7 @@ function AnnotationCanvas({ documentData }) {
       try {
         console.log("Fetching OCR bboxes for page", currentPage);
 
-        // Use environment-aware URL (codespace or localhost)
-        const isCodespace = window.location.hostname.includes("github.dev");
-        const donutServiceUrl = isCodespace
-          ? window.location.origin.replace("-3000.", "-3002.") +
-            "/detect-text-bboxes"
-          : "http://localhost:3002/detect-text-bboxes";
-
+        const donutServiceUrl = `${DONUT_SERVICE_URL}/detect-text-bboxes`;
         console.log("Calling Donut OCR service at:", donutServiceUrl);
 
         // Get existing field bboxes to exclude from OCR detection
@@ -1079,12 +1073,7 @@ function AnnotationCanvas({ documentData }) {
 
     try {
       // Call the intelligent template endpoint
-      const isCodespace = window.location.hostname.includes("github.dev");
-      const intelligentServiceUrl = isCodespace
-        ? window.location.origin.replace("-3000.", "-3002.") +
-          "/apply-template-intelligent"
-        : "http://localhost:3002/apply-template-intelligent";
-
+      const intelligentServiceUrl = `${DONUT_SERVICE_URL}/apply-template-intelligent`;
       console.log(`Calling intelligent service at: ${intelligentServiceUrl}`);
 
       // Prepare template fields for the API
@@ -1353,10 +1342,7 @@ function AnnotationCanvas({ documentData }) {
         // Step 1: Fetch OCR bboxes for target page
         console.log(`Fetching OCR bboxes for page ${targetPage}...`);
         const isCodespace = window.location.hostname.includes("github.dev");
-        const ocrServiceUrl = isCodespace
-          ? window.location.origin.replace("-3000.", "-3002.") +
-            "/detect-text-bboxes"
-          : "http://localhost:3002/detect-text-bboxes";
+        const ocrServiceUrl = `${DONUT_SERVICE_URL}/detect-text-bboxes`;
 
         const ocrResponse = await fetch(ocrServiceUrl, {
           method: "POST",
@@ -1457,10 +1443,7 @@ function AnnotationCanvas({ documentData }) {
 
           try {
             // Call donut service to extract from the final bbox
-            const donutServiceUrl = isCodespace
-              ? window.location.origin.replace("-3000.", "-3002.") +
-                "/reextract-bbox"
-              : "http://localhost:3002/reextract-bbox";
+            const donutServiceUrl = `${DONUT_SERVICE_URL}/reextract-bbox`;
 
             console.log(
               `Extracting ${baseFieldName} from page ${targetPage}, ${
