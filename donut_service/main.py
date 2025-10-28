@@ -14,6 +14,7 @@ import json
 from typing import Dict, Any, List
 from pathlib import Path
 from difflib import SequenceMatcher
+from datetime import datetime
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -45,6 +46,53 @@ CORS(
 
 # Global model variables (lazy loaded)
 _doc_qa_pipeline = None
+
+# Template storage directory
+TEMPLATE_DIR = Path("/tmp/invoice_templates")
+TEMPLATE_DIR.mkdir(exist_ok=True)
+
+
+def save_template(vendor_name: str, template_data: Dict[str, Any]) -> bool:
+    """Save a learned template for reuse."""
+    try:
+        template_file = TEMPLATE_DIR / f"{vendor_name}.json"
+        template_data["last_updated"] = datetime.now().isoformat()
+        template_data["version"] = template_data.get("version", 1) + 1
+
+        with open(template_file, "w") as f:
+            json.dump(template_data, f, indent=2)
+
+        logger.info(f"[Template] Saved template for vendor: {vendor_name}")
+        return True
+    except Exception as e:
+        logger.error(f"[Template] Failed to save template: {e}")
+        return False
+
+
+def load_template(vendor_name: str) -> Dict[str, Any]:
+    """Load a saved template."""
+    try:
+        template_file = TEMPLATE_DIR / f"{vendor_name}.json"
+        if template_file.exists():
+            with open(template_file, "r") as f:
+                template = json.load(f)
+            logger.info(
+                f"[Template] Loaded template for vendor: {vendor_name} (v{template.get('version', 1)})"
+            )
+            return template
+        return None
+    except Exception as e:
+        logger.error(f"[Template] Failed to load template: {e}")
+        return None
+
+
+def list_templates() -> List[str]:
+    """List all saved vendor templates."""
+    try:
+        return [f.stem for f in TEMPLATE_DIR.glob("*.json")]
+    except Exception as e:
+        logger.error(f"[Template] Failed to list templates: {e}")
+        return []
 
 
 def load_layoutlm_model():
@@ -325,7 +373,7 @@ def match_value_to_ocr_bbox(
 
 
 def extract_invoice_fields_layoutlm(
-    image_path: str, custom_fields: list = None
+    image_path: str, custom_fields: list = None, start_field_id: int = 1
 ) -> List[dict]:
     """
     Extract invoice fields using Impira's LayoutLM document Q&A model.
@@ -337,6 +385,7 @@ def extract_invoice_fields_layoutlm(
         image_path: Path to the invoice image
         custom_fields: Optional list of custom field definitions from user
                       Each field should have: key, question, type, required
+        start_field_id: Starting ID for field numbering (for batch processing)
 
     Returns:
         List of extracted fields with bboxes and confidence scores
@@ -355,81 +404,171 @@ def extract_invoice_fields_layoutlm(
         logger.info(f"OCR found {len(ocr_words)} words")
 
         # Define questions for invoice fields
-        # Start with default questions, then add/override with custom fields
-        questions = {
-            "invoice_number": "What is the invoice number?",
-            "invoice_date": "What is the invoice date?",
-            "total_amount": "What is the total amount?",
-            "vendor_name": "What is the vendor name?",
-            "po_number": "What is the PO number?",
-        }
-
-        # Add or override with custom fields if provided
+        # If custom fields provided, use ONLY those; otherwise use defaults
         if custom_fields:
             logger.info(
-                f"Adding {len(custom_fields)} custom field definitions to defaults"
+                f"Using {len(custom_fields)} custom field definitions (replacing defaults)"
             )
             logger.info(f"Custom fields received: {custom_fields}")
+
+            questions = {}
+            line_item_fields = []  # Track line item fields separately
 
             for field in custom_fields:
                 field_key = field.get("key") or field.get("field_key")
                 question = field.get("question")
+                category = field.get("category", "")
+
                 if field_key and question:
-                    questions[field_key] = question
-                    logger.info(f"Added/updated question for {field_key}: {question}")
+                    questions[field_key] = {
+                        "question": question,
+                        "category": category,
+                        "type": field.get("type", "text"),
+                    }
+
+                    # Track if this is a line item field
+                    if category == "line_items":
+                        line_item_fields.append(field_key)
+
+                    logger.info(f"Added question for {field_key}: {question}")
                 else:
                     logger.warning(f"Skipping invalid field: {field}")
         else:
             logger.info("No custom fields provided - using only default questions")
+            questions = {
+                "invoice_number": {
+                    "question": "What is the invoice number?",
+                    "category": "invoice",
+                    "type": "text",
+                },
+                "invoice_date": {
+                    "question": "What is the invoice date?",
+                    "category": "invoice",
+                    "type": "date",
+                },
+                "total_amount": {
+                    "question": "What is the total amount?",
+                    "category": "amounts",
+                    "type": "currency",
+                },
+                "vendor_name": {
+                    "question": "What is the vendor name?",
+                    "category": "vendor",
+                    "type": "text",
+                },
+                "po_number": {
+                    "question": "What is the PO number?",
+                    "category": "invoice",
+                    "type": "text",
+                },
+            }
+            line_item_fields = []
 
         fields = []
-        field_id = 1
+        field_id = start_field_id
 
         logger.info(
             f"Extracting fields using LayoutLM Q&A for {len(questions)} questions..."
         )
+        logger.info(f"Line item fields detected: {line_item_fields}")
 
-        for field_label, question in questions.items():
+        for field_label, field_config in questions.items():
             try:
-                # Ask the question to the document
-                result = doc_qa(image=image, question=question)
+                question = (
+                    field_config["question"]
+                    if isinstance(field_config, dict)
+                    else field_config
+                )
+                category = (
+                    field_config.get("category", "")
+                    if isinstance(field_config, dict)
+                    else ""
+                )
+                is_line_item = category == "line_items"
+
+                # For line items, modify question to get multiple instances
+                if is_line_item:
+                    # Try to extract from table rows - ask LayoutLM for top 5 matches
+                    logger.info(
+                        f"[LINE ITEM] Extracting {field_label} from table rows..."
+                    )
+                    result = doc_qa(image=image, question=question, top_k=5)
+                else:
+                    # Regular field - single answer
+                    result = doc_qa(image=image, question=question)
 
                 # Result format: [{'score': 0.95, 'answer': 'INV-12345', 'start': 10, 'end': 10}]
                 if result:
-                    answer_data = result[0] if isinstance(result, list) else result
+                    # Handle multiple results for line items
+                    results_to_process = (
+                        result if isinstance(result, list) else [result]
+                    )
 
-                    answer = answer_data.get("answer", "").strip()
-                    confidence = answer_data.get("score", 0.0)
+                    # For line items, process up to 5 results; for others, just the first
+                    max_results = 5 if is_line_item else 1
 
-                    # Only include if confidence is reasonable and answer is not empty
-                    if answer and confidence > 0.1:
-                        # Match the answer text to OCR words to get bbox
-                        bbox_match = match_value_to_ocr_bbox(
-                            answer, ocr_words, img_width, img_height
-                        )
-                        bbox = bbox_match.get("bbox", [0, 0, img_width // 4, 30])
+                    for idx, answer_data in enumerate(results_to_process[:max_results]):
+                        answer = answer_data.get("answer", "").strip()
+                        confidence = answer_data.get("score", 0.0)
 
-                        # Use OCR confidence if available, otherwise use model confidence
-                        final_confidence = max(
-                            confidence, bbox_match.get("confidence", 0.0)
-                        )
+                        # Only include if confidence is reasonable and answer is not empty
+                        if answer and confidence > 0.1:
+                            # Skip if this is a duplicate answer (common in line items)
+                            if is_line_item and idx > 0:
+                                # Check if this answer is similar to previous ones
+                                existing_values = [
+                                    f["value"]
+                                    for f in fields
+                                    if f["label"] == field_label
+                                ]
+                                if answer in existing_values:
+                                    logger.debug(f"Skipping duplicate answer: {answer}")
+                                    continue
 
-                        fields.append(
-                            {
-                                "id": field_id,
-                                "label": field_label,
-                                "value": answer,
-                                "bbox": bbox,
-                                "confidence": float(final_confidence),
-                                "source": "layoutlm_qa",
-                            }
-                        )
-                        field_id += 1
-                        logger.info(
-                            f"✓ {field_label}: {answer} (confidence: {confidence:.2f}, bbox: {bbox})"
-                        )
-                    else:
-                        logger.debug(f"✗ {field_label}: Low confidence or empty answer")
+                            # Match the answer text to OCR words to get bbox
+                            bbox_match = match_value_to_ocr_bbox(
+                                answer, ocr_words, img_width, img_height
+                            )
+                            bbox = bbox_match.get("bbox", [0, 0, img_width // 4, 30])
+
+                            # Use OCR confidence if available, otherwise use model confidence
+                            final_confidence = max(
+                                confidence, bbox_match.get("confidence", 0.0)
+                            )
+
+                            # For line items, add row index to label
+                            label = (
+                                f"{field_label}_row_{idx + 1}"
+                                if is_line_item and max_results > 1
+                                else field_label
+                            )
+
+                            fields.append(
+                                {
+                                    "id": field_id,
+                                    "label": label,
+                                    "value": answer,
+                                    "bbox": bbox,
+                                    "confidence": float(final_confidence),
+                                    "source": "layoutlm_qa",
+                                    "is_line_item": is_line_item,
+                                    "row_index": idx + 1 if is_line_item else None,
+                                }
+                            )
+                            field_id += 1
+
+                            if is_line_item:
+                                logger.info(
+                                    f"✓ {field_label} [row {idx + 1}]: {answer} (confidence: {confidence:.2f})"
+                                )
+                            else:
+                                logger.info(
+                                    f"✓ {field_label}: {answer} (confidence: {confidence:.2f}, bbox: {bbox})"
+                                )
+                        else:
+                            logger.debug(
+                                f"✗ {field_label}: Low confidence or empty answer"
+                            )
 
             except Exception as e:
                 logger.warning(f"Failed to extract {field_label}: {e}")
@@ -517,7 +656,7 @@ def merge_line_words(words: list) -> dict:
 
 
 def extract_fields_with_donut(
-    image_path: str, custom_fields: list = None
+    image_path: str, custom_fields: list = None, start_field_id: int = 1
 ) -> Dict[str, Any]:
     """
     Extract invoice fields using Impira LayoutLM Document Q&A model.
@@ -531,6 +670,7 @@ def extract_fields_with_donut(
     Args:
         image_path: Path to image file
         custom_fields: Optional list of custom field definitions from user
+        start_field_id: Starting ID for field numbering (for batch processing)
 
     Returns:
         Dictionary with extracted fields and bounding boxes
@@ -543,8 +683,10 @@ def extract_fields_with_donut(
         logger.info(f"Image loaded: {image_width}x{image_height}")
 
         # Extract invoice fields using LayoutLM Q&A
-        # Pass custom fields if provided
-        layoutlm_fields = extract_invoice_fields_layoutlm(image_path, custom_fields)
+        # Pass custom fields if provided and starting field ID
+        layoutlm_fields = extract_invoice_fields_layoutlm(
+            image_path, custom_fields, start_field_id
+        )
         logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
 
         # Normalize bboxes to 0-1000 scale (frontend expects this)
@@ -844,6 +986,152 @@ def extract_document():
 
     except Exception as e:
         logger.error(f"Extraction error: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/extract-batch", methods=["POST"])
+def extract_document_batch():
+    """
+    Extract fields from document in batches to avoid CPU overload.
+    Processes questions in groups of 5 (configurable), with priority given to required fields.
+
+    Request body:
+        {
+            "image": "base64-encoded-document-data",
+            "format": "png|jpg|jpeg|pdf",
+            "custom_fields": [
+                {
+                    "key": "invoice_number",
+                    "question": "What is the invoice number?",
+                    "type": "text",
+                    "required": true  // Priority fields
+                },
+                ...
+            ],
+            "batch_size": 5,  // Optional, default 5
+            "batch_index": 0,  // Which batch to process (0 = first 5, 1 = next 5, etc.)
+        }
+
+    Returns:
+        {
+            "status": "success",
+            "fields": [...],  // Fields from this batch
+            "batch_info": {
+                "batch_index": 0,
+                "batch_size": 5,
+                "total_fields": 20,
+                "total_batches": 4,
+                "has_more": true,
+                "processed_count": 5
+            }
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if not data or "image" not in data:
+            return jsonify({"error": "Missing image data"}), 400
+
+        # Extract parameters
+        doc_data = base64.b64decode(data["image"])
+        doc_format = data.get("format", "png").lower()
+        custom_fields = data.get("custom_fields", [])
+        batch_size = data.get("batch_size", 5)
+        batch_index = data.get("batch_index", 0)
+
+        logger.info(
+            f"[/extract-batch] Processing batch {batch_index} with {len(custom_fields)} total fields"
+        )
+
+        # Sort fields by priority: required fields first
+        priority_fields = [f for f in custom_fields if f.get("required", False)]
+        optional_fields = [f for f in custom_fields if not f.get("required", False)]
+        sorted_fields = priority_fields + optional_fields
+
+        logger.info(
+            f"[/extract-batch] Priority: {len(priority_fields)} required, {len(optional_fields)} optional"
+        )
+
+        # Calculate batch range
+        start_idx = batch_index * batch_size
+        end_idx = min(start_idx + batch_size, len(sorted_fields))
+        batch_fields = sorted_fields[start_idx:end_idx]
+
+        total_batches = (len(sorted_fields) + batch_size - 1) // batch_size
+        has_more = batch_index < (total_batches - 1)
+
+        logger.info(
+            f"[/extract-batch] Processing fields {start_idx} to {end_idx-1} (batch {batch_index+1}/{total_batches})"
+        )
+
+        if not batch_fields:
+            return jsonify(
+                {
+                    "status": "success",
+                    "fields": [],
+                    "batch_info": {
+                        "batch_index": batch_index,
+                        "batch_size": batch_size,
+                        "total_fields": len(sorted_fields),
+                        "total_batches": total_batches,
+                        "has_more": False,
+                        "processed_count": 0,
+                    },
+                }
+            )
+
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:
+            tmp.write(doc_data)
+            tmp_path = tmp.name
+
+        try:
+            # Convert PDF to image if needed
+            if doc_format == "pdf":
+                images = convert_from_path(tmp_path, first_page=1, last_page=1, dpi=200)
+                if not images:
+                    return jsonify({"error": "PDF has no pages"}), 400
+
+                img_path = tmp_path.replace(".pdf", ".png")
+                images[0].save(img_path, "PNG")
+                os.unlink(tmp_path)
+                tmp_path = img_path
+
+            # Extract ONLY the batch fields
+            # Calculate starting field ID based on batch index
+            start_field_id = (batch_index * batch_size) + 1
+
+            logger.info(f"[/extract-batch] Starting field IDs from {start_field_id}")
+
+            result = extract_fields_with_donut(tmp_path, batch_fields, start_field_id)
+
+            logger.info(
+                f"[/extract-batch] Extracted {len(result.get('fields', []))} fields from batch {batch_index}"
+            )
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "fields": result.get("fields", []),
+                    "batch_info": {
+                        "batch_index": batch_index,
+                        "batch_size": batch_size,
+                        "total_fields": len(sorted_fields),
+                        "total_batches": total_batches,
+                        "has_more": has_more,
+                        "processed_count": len(result.get("fields", [])),
+                        "next_batch_index": batch_index + 1 if has_more else None,
+                    },
+                    "image_size": result.get("image_size", {}),
+                }
+            )
+
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    except Exception as e:
+        logger.error(f"Batch extraction error: {e}", exc_info=True)
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
@@ -1302,8 +1590,8 @@ def detect_text_bboxes():
                     w = ocr_data["width"][i]
                     h = ocr_data["height"][i]
 
-                    # Add padding around bbox to prevent text cutoff (3px on each side)
-                    padding_px = 3
+                    # Add padding around bbox to prevent text cutoff (6px on each side for better accuracy)
+                    padding_px = 6
                     x = max(0, x - padding_px)
                     y = max(0, y - padding_px)
                     w = min(img_width - x, w + (padding_px * 2))
@@ -1356,6 +1644,675 @@ def detect_text_bboxes():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/apply-template-intelligent", methods=["POST"])
+def apply_template_intelligent():
+    """
+    Apply template fields intelligently using LayoutLM + enhanced OCR.
+    Detects table structure, reads headers, and uses semantic understanding.
+
+    Request body:
+        {
+            "image": "base64-encoded-document-data",
+            "format": "png|jpg|jpeg|pdf",
+            "source_page": 1,
+            "target_page": 1,  // Can be same page for column detection
+            "template_fields": [
+                {
+                    "field_name": "gross_weight",
+                    "value": "127.700",
+                    "bbox": [x1, y1, x2, y2]
+                }
+            ],
+            "suggest_columns": true
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if not data or "image" not in data:
+            return jsonify({"error": "Missing image data"}), 400
+
+        # Load LayoutLM model
+        global _doc_qa_pipeline
+        if _doc_qa_pipeline is None:
+            load_layoutlm_model()
+
+        doc_data = base64.b64decode(data["image"])
+        doc_format = data.get("format", "pdf").lower()
+        source_page = data.get("source_page", 1)
+        target_page = data.get("target_page", 1)
+        template_fields = data.get("template_fields", [])
+        suggest_columns = data.get("suggest_columns", False)
+
+        same_page = source_page == target_page
+
+        logger.info(
+            f"[/apply-template-intelligent] Mode: {'Column detection' if same_page else 'Cross-page'}, Page: {target_page}, Templates: {len(template_fields)}"
+        )
+
+        tmp_path = None
+        image_path = None
+
+        try:
+            # Process image
+            if doc_format == "pdf":
+                tmp_path = "/tmp/temp_doc_template.pdf"
+                with open(tmp_path, "wb") as f:
+                    f.write(doc_data)
+
+                images = convert_from_path(
+                    tmp_path, first_page=target_page, last_page=target_page, dpi=200
+                )
+                if not images:
+                    return (
+                        jsonify({"error": f"Failed to convert page {target_page}"}),
+                        500,
+                    )
+
+                image = images[0]
+
+                # Save image for OCR
+                image_path = "/tmp/temp_page.png"
+                image.save(image_path)
+            else:
+                import io
+
+                image = Image.open(io.BytesIO(doc_data)).convert("RGB")
+                image_path = "/tmp/temp_page.png"
+                image.save(image_path)
+
+            img_width, img_height = image.size
+            logger.info(
+                f"[/apply-template-intelligent] Image size: {img_width}x{img_height}"
+            )
+
+            # IMPROVED OCR: Use PSM 6 for table/block text instead of PSM 3
+            # PSM 6 assumes uniform block of text (better for tables)
+            ocr_result = pytesseract.image_to_data(
+                image, output_type=pytesseract.Output.DICT, config="--psm 6"
+            )
+
+            # Build enhanced text blocks with better filtering
+            text_blocks = []
+            for i in range(len(ocr_result["text"])):
+                text = ocr_result["text"][i].strip()
+                conf = int(ocr_result["conf"][i])
+
+                # Lower confidence threshold and accept more text
+                if text and conf > 20:  # Reduced from 30 to 20
+                    x, y = ocr_result["left"][i], ocr_result["top"][i]
+                    w, h = ocr_result["width"][i], ocr_result["height"][i]
+
+                    norm_bbox = [
+                        int((x / img_width) * 1000),
+                        int((y / img_height) * 1000),
+                        int(((x + w) / img_width) * 1000),
+                        int(((y + h) / img_height) * 1000),
+                    ]
+
+                    text_blocks.append(
+                        {
+                            "text": text,
+                            "bbox": norm_bbox,
+                            "pixel_bbox": [x, y, x + w, y + h],
+                            "conf": conf,
+                        }
+                    )
+
+            logger.info(
+                f"[/apply-template-intelligent] OCR found {len(text_blocks)} text blocks"
+            )
+
+            # Log sample for debugging
+            if text_blocks:
+                sample_texts = [b["text"] for b in text_blocks[:20]]
+                logger.info(
+                    f"[/apply-template-intelligent] Sample OCR text: {sample_texts}"
+                )
+
+            if not template_fields:
+                return jsonify({"error": "No template fields provided"}), 400
+
+            # Analyze template pattern
+            template_x_positions = []
+            template_y_positions = []
+            template_values = []
+
+            for t in template_fields:
+                bbox = t.get("bbox", [0, 0, 1000, 1000])
+                center_x = (bbox[0] + bbox[2]) / 2
+                center_y = (bbox[1] + bbox[3]) / 2
+                template_x_positions.append(center_x)
+                template_y_positions.append(center_y)
+                template_values.append(t.get("value", ""))
+
+            x_variance = (
+                max(template_x_positions) - min(template_x_positions)
+                if template_x_positions
+                else 0
+            )
+            y_variance = (
+                max(template_y_positions) - min(template_y_positions)
+                if template_y_positions
+                else 0
+            )
+
+            is_column_pattern = x_variance < 100
+            avg_template_x = sum(template_x_positions) / len(template_x_positions)
+            min_template_y = min(template_y_positions)
+            max_template_y = max(template_y_positions)
+
+            logger.info(
+                f"[/apply-template-intelligent] Pattern: {'COLUMN' if is_column_pattern else 'SCATTERED'}, "
+                f"X_var={x_variance:.1f}, Y_var={y_variance:.1f}, Avg_X={avg_template_x:.1f}"
+            )
+
+            extracted_fields = []
+
+            if same_page and suggest_columns and is_column_pattern:
+                # COLUMN DETECTION MODE with SEMANTIC UNDERSTANDING
+                logger.info(
+                    "[/apply-template-intelligent] Column detection mode activated"
+                )
+
+                # Step 1: Find potential headers ABOVE the template region
+                header_y_max = (
+                    min_template_y - 20
+                )  # Headers should be at least 2% above data
+                potential_headers_raw = []
+
+                for block in text_blocks:
+                    block_center_y = (block["bbox"][1] + block["bbox"][3]) / 2
+
+                    # Must be above template rows
+                    if block_center_y < header_y_max:
+                        potential_headers_raw.append(block)
+
+                logger.info(
+                    f"[/apply-template-intelligent] Found {len(potential_headers_raw)} raw header blocks"
+                )
+
+                # Step 1.5: MERGE ADJACENT HEADER BLOCKS (e.g., "Material" + "No." → "Material No.")
+                # Sort by Y then X to process left-to-right, top-to-bottom
+                potential_headers_raw.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+                merged_headers = []
+                i = 0
+                while i < len(potential_headers_raw):
+                    current = potential_headers_raw[i]
+                    merged_text = current["text"]
+                    merged_bbox = current["bbox"].copy()
+                    merged_conf = current["conf"]
+
+                    # Look ahead for adjacent blocks (same row, close X position)
+                    j = i + 1
+                    while j < len(potential_headers_raw):
+                        next_block = potential_headers_raw[j]
+
+                        # Check if on same row (Y within 10 units = 1%)
+                        y_diff = abs(current["bbox"][1] - next_block["bbox"][1])
+                        # Check if horizontally adjacent (X gap < 30 units = 3%)
+                        x_gap = next_block["bbox"][0] - merged_bbox[2]
+
+                        if y_diff < 10 and 0 <= x_gap < 30:
+                            # Merge this block
+                            merged_text += " " + next_block["text"]
+                            merged_bbox[2] = next_block["bbox"][2]  # Extend right edge
+                            merged_bbox[3] = max(
+                                merged_bbox[3], next_block["bbox"][3]
+                            )  # Max bottom
+                            merged_conf = max(merged_conf, next_block["conf"])
+                            j += 1
+                        else:
+                            break
+
+                    merged_headers.append(
+                        {
+                            "text": merged_text,
+                            "bbox": merged_bbox,
+                            "conf": merged_conf,
+                        }
+                    )
+
+                    i = j if j > i + 1 else i + 1
+
+                potential_headers = merged_headers
+                logger.info(
+                    f"[/apply-template-intelligent] Merged into {len(potential_headers)} complete headers: "
+                    f"{[h['text'] for h in potential_headers[:10]]}"
+                )
+
+                # Step 2: Group all text blocks into columns by X position
+                columns = {}
+                x_tolerance = 60  # 6% tolerance
+
+                for block in text_blocks:
+                    block_center_x = (block["bbox"][0] + block["bbox"][2]) / 2
+                    block_center_y = (block["bbox"][1] + block["bbox"][3]) / 2
+
+                    # Skip template column
+                    if abs(block_center_x - avg_template_x) < x_tolerance:
+                        continue
+
+                    # Skip if not in data region (below headers)
+                    if block_center_y < min_template_y - 50:
+                        continue
+
+                    # Find or create column
+                    found = False
+                    for col_x in list(columns.keys()):
+                        if abs(block_center_x - col_x) < x_tolerance:
+                            columns[col_x].append(block)
+                            found = True
+                            break
+
+                    if not found:
+                        columns[block_center_x] = [block]
+
+                logger.info(
+                    f"[/apply-template-intelligent] Grouped into {len(columns)} columns"
+                )
+
+                # Step 2.5: CONSERVATIVE LayoutLM usage - only for truly missing headers
+                # Reduce AI reliance, prioritize template-based matching
+                layoutlm_headers = []
+                use_layoutlm = data.get("use_ai_fallback", False)  # User must opt-in
+
+                if (
+                    use_layoutlm
+                    and len(potential_headers) < (len(columns) * 0.5)
+                    and _doc_qa_pipeline
+                ):
+                    # Only use if more than 50% of headers are missing
+                    try:
+                        logger.info(
+                            "[/apply-template-intelligent] LayoutLM fallback activated (>50% headers missing)..."
+                        )
+                        result = _doc_qa_pipeline(
+                            image=image,
+                            question="What are all the column headers in the table?",
+                        )
+
+                        if result and isinstance(result, dict):
+                            answer = result.get("answer", "")
+                            if answer and answer != "None":
+                                # Parse comma-separated or space-separated headers
+                                llm_headers = [
+                                    h.strip()
+                                    for h in answer.replace(",", " ").split()
+                                    if h.strip()
+                                ]
+                                layoutlm_headers = llm_headers
+                                logger.info(
+                                    f"[/apply-template-intelligent] LayoutLM found headers: {llm_headers}"
+                                )
+                    except Exception as e:
+                        logger.warning(
+                            f"[/apply-template-intelligent] LayoutLM Q&A failed: {e}"
+                        )
+                else:
+                    logger.info(
+                        f"[/apply-template-intelligent] Skipping LayoutLM (template-based mode, {len(potential_headers)} headers found)"
+                    )
+
+                # Combine OCR and LayoutLM headers
+                all_header_texts = [
+                    h["text"] for h in potential_headers
+                ] + layoutlm_headers
+                logger.info(
+                    f"[/apply-template-intelligent] Total headers available: {all_header_texts}"
+                )
+
+                # Step 3: For each column, find its header and match rows
+                # Build a map of template field names for semantic matching
+                from difflib import SequenceMatcher
+
+                def fuzzy_match_score(a, b):
+                    """Calculate similarity between two strings (0-1)"""
+                    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+                template_field_names = [
+                    t.get("field_name", "").lower().replace("_", " ")
+                    for t in template_fields
+                ]
+
+                for col_x, col_blocks in columns.items():
+                    if len(col_blocks) < 1:
+                        continue
+
+                    # Find header for this column using HYBRID approach:
+                    # 1. Spatial proximity (closest by X position)
+                    # 2. Semantic similarity (fuzzy match with template field names)
+                    column_header = None
+                    min_x_dist = float("inf")
+                    best_semantic_score = 0
+
+                    # First pass: spatial proximity
+                    for header in potential_headers:
+                        header_center_x = (header["bbox"][0] + header["bbox"][2]) / 2
+                        x_dist = abs(header_center_x - col_x)
+
+                        if x_dist < 80:  # Within 8%
+                            # Calculate semantic similarity with template fields
+                            max_similarity = 0
+                            for template_name in template_field_names:
+                                similarity = fuzzy_match_score(
+                                    header["text"], template_name
+                                )
+                                max_similarity = max(max_similarity, similarity)
+
+                            # Weighted score: 60% spatial + 40% semantic
+                            spatial_score = 1.0 - (x_dist / 80.0)  # Normalize to 0-1
+                            combined_score = 0.6 * spatial_score + 0.4 * max_similarity
+
+                            if combined_score > best_semantic_score:
+                                best_semantic_score = combined_score
+                                column_header = header
+                                min_x_dist = x_dist
+
+                    # Generate field name from header or position
+                    if column_header:
+                        # Clean up header text for field name
+                        header_text = column_header["text"]
+                        suggested_field_name = (
+                            header_text.lower()
+                            .replace(" ", "_")
+                            .replace("/", "_")
+                            .replace(".", "")
+                            .replace("-", "_")
+                            .strip("_")
+                        )
+                        logger.info(
+                            f"[/apply-template-intelligent] Column at X={col_x:.0f} has header: '{header_text}' → {suggested_field_name} (score={best_semantic_score:.2f})"
+                        )
+                    else:
+                        suggested_field_name = f"column_{int(col_x)}"
+                        logger.info(
+                            f"[/apply-template-intelligent] Column at X={col_x:.0f} has NO header, using: {suggested_field_name}"
+                        )
+
+                    # Sort column blocks by Y position
+                    col_blocks_sorted = sorted(
+                        col_blocks, key=lambda b: (b["bbox"][1] + b["bbox"][3]) / 2
+                    )
+
+                    # Match each template Y position to closest block in this column
+                    for template_idx, template_y in enumerate(template_y_positions):
+                        closest_block = None
+                        min_y_diff = float("inf")
+
+                        for block in col_blocks_sorted:
+                            block_center_y = (block["bbox"][1] + block["bbox"][3]) / 2
+                            y_diff = abs(block_center_y - template_y)
+
+                            if (
+                                y_diff < min_y_diff and y_diff < 60
+                            ):  # Within 6% tolerance
+                                min_y_diff = y_diff
+                                closest_block = block
+
+                        if closest_block:
+                            field_name = (
+                                f"{suggested_field_name}_item_{template_idx + 1}"
+                                if len(template_y_positions) > 1
+                                else suggested_field_name
+                            )
+
+                            extracted_fields.append(
+                                {
+                                    "field_name": field_name,
+                                    "value": closest_block["text"],
+                                    "bbox": closest_block["bbox"],
+                                    "confidence": closest_block["conf"] / 100.0,
+                                    "source": "column_suggestion",
+                                    "column_header": (
+                                        column_header["text"] if column_header else None
+                                    ),
+                                }
+                            )
+
+                            logger.info(
+                                f"[/apply-template-intelligent] Matched {field_name} = '{closest_block['text']}' "
+                                f"(Y_diff={min_y_diff:.1f})"
+                            )
+
+                logger.info(
+                    f"[/apply-template-intelligent] Extracted {len(extracted_fields)} fields from {len(columns)} columns"
+                )
+
+            else:
+                # CROSS-PAGE TEMPLATE MODE OR NON-TABULAR DOCUMENTS
+                logger.info(
+                    "[/apply-template-intelligent] Cross-page/non-tabular template mode"
+                )
+
+                for template in template_fields:
+                    field_name = template.get("field_name", "unknown")
+                    example_value = template.get("value", "")
+                    template_bbox = template.get("bbox", [0, 0, 1000, 1000])
+
+                    template_center_y = (template_bbox[1] + template_bbox[3]) / 2
+                    template_center_x = (template_bbox[0] + template_bbox[2]) / 2
+
+                    # Strategy 1: Find blocks in similar region (spatial matching)
+                    y_tolerance = 200
+                    x_tolerance = 200
+
+                    candidates = []
+                    for block in text_blocks:
+                        block_center_y = (block["bbox"][1] + block["bbox"][3]) / 2
+                        block_center_x = (block["bbox"][0] + block["bbox"][2]) / 2
+
+                        y_diff = abs(block_center_y - template_center_y)
+                        x_diff = abs(block_center_x - template_center_x)
+
+                        if y_diff < y_tolerance and x_diff < x_tolerance:
+                            # Accept both numeric and text, but prefer same type
+                            is_numeric = any(c.isdigit() for c in block["text"])
+                            example_is_numeric = any(c.isdigit() for c in example_value)
+
+                            type_match_bonus = (
+                                0.5 if (is_numeric == example_is_numeric) else 0.0
+                            )
+                            distance = (y_diff**2 + x_diff**2) ** 0.5 - (
+                                type_match_bonus * 50
+                            )
+                            candidates.append({"block": block, "distance": distance})
+
+                    # Strategy 2: If no spatial match and LayoutLM available, ask the model
+                    if not candidates and _doc_qa_pipeline and not same_page:
+                        try:
+                            # Convert field_name to human-readable question
+                            question = field_name.replace("_", " ").title()
+                            logger.info(
+                                f"[/apply-template-intelligent] Asking LayoutLM: 'What is the {question}?'"
+                            )
+
+                            result = _doc_qa_pipeline(
+                                image=image, question=f"What is the {question}?"
+                            )
+
+                            if result and isinstance(result, dict):
+                                answer = result.get("answer", "")
+                                answer_score = result.get("score", 0.0)
+
+                                if answer and answer != "None" and answer_score > 0.3:
+                                    # Find the bbox for this answer in OCR results
+                                    for block in text_blocks:
+                                        if (
+                                            answer.lower() in block["text"].lower()
+                                            or block["text"].lower() in answer.lower()
+                                        ):
+                                            extracted_fields.append(
+                                                {
+                                                    "field_name": field_name,
+                                                    "value": answer,
+                                                    "bbox": block["bbox"],
+                                                    "confidence": answer_score,
+                                                    "source": "layoutlm_qa",
+                                                }
+                                            )
+                                            logger.info(
+                                                f"[/apply-template-intelligent] LayoutLM found {field_name} = '{answer}' (score={answer_score:.2f})"
+                                            )
+                                            break
+                        except Exception as e:
+                            logger.warning(
+                                f"[/apply-template-intelligent] LayoutLM Q&A for '{field_name}' failed: {e}"
+                            )
+
+                    # Use best spatial match if found
+                    if candidates:
+                        candidates.sort(key=lambda c: c["distance"])
+                        best = candidates[0]["block"]
+
+                        extracted_fields.append(
+                            {
+                                "field_name": field_name,
+                                "value": best["text"],
+                                "bbox": best["bbox"],
+                                "confidence": best["conf"] / 100.0,
+                                "source": "template_match",
+                            }
+                        )
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "fields": extracted_fields,
+                    "page": target_page,
+                    "mode": (
+                        "column_detection"
+                        if (same_page and suggest_columns)
+                        else "template_application"
+                    ),
+                    "debug": {
+                        "total_ocr_blocks": len(text_blocks),
+                        "columns_detected": (
+                            len(columns) if same_page and suggest_columns else 0
+                        ),
+                    },
+                }
+            )
+
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            if image_path and os.path.exists(image_path):
+                os.unlink(image_path)
+
+    except Exception as e:
+        logger.error(f"Error in intelligent template application: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/templates/save", methods=["POST"])
+def save_vendor_template():
+    """
+    Save a learned template for vendor reuse.
+
+    Request body:
+        {
+            "vendor_name": "acme_corp",
+            "fields": [
+                {
+                    "field_name": "invoice_number",
+                    "bbox": [x1, y1, x2, y2],
+                    "field_type": "text",
+                    "required": true
+                }
+            ],
+            "metadata": {
+                "page_count": 2,
+                "has_table": true,
+                "description": "Standard ACME invoice format"
+            }
+        }
+    """
+    try:
+        data = request.get_json()
+        vendor_name = data.get("vendor_name", "").strip()
+
+        if not vendor_name:
+            return jsonify({"error": "vendor_name is required"}), 400
+
+        # Sanitize vendor name for filename
+        vendor_name = "".join(
+            c if c.isalnum() or c in "_-" else "_" for c in vendor_name.lower()
+        )
+
+        template_data = {
+            "vendor_name": vendor_name,
+            "fields": data.get("fields", []),
+            "metadata": data.get("metadata", {}),
+            "created": datetime.now().isoformat(),
+        }
+
+        success = save_template(vendor_name, template_data)
+
+        if success:
+            return jsonify(
+                {
+                    "status": "success",
+                    "vendor_name": vendor_name,
+                    "template_saved": True,
+                }
+            )
+        else:
+            return jsonify({"error": "Failed to save template"}), 500
+
+    except Exception as e:
+        logger.error(f"Error saving template: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/templates/load/<vendor_name>", methods=["GET"])
+def load_vendor_template(vendor_name):
+    """Load a saved template by vendor name."""
+    try:
+        template = load_template(vendor_name)
+
+        if template:
+            return jsonify({"status": "success", "template": template})
+        else:
+            return jsonify({"error": "Template not found"}), 404
+
+    except Exception as e:
+        logger.error(f"Error loading template: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/templates/list", methods=["GET"])
+def list_vendor_templates():
+    """List all saved vendor templates."""
+    try:
+        templates = list_templates()
+        return jsonify(
+            {"status": "success", "templates": templates, "count": len(templates)}
+        )
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/templates/delete/<vendor_name>", methods=["DELETE"])
+def delete_vendor_template(vendor_name):
+    """Delete a saved template."""
+    try:
+        template_file = TEMPLATE_DIR / f"{vendor_name}.json"
+
+        if template_file.exists():
+            template_file.unlink()
+            logger.info(f"[Template] Deleted template for vendor: {vendor_name}")
+            return jsonify({"status": "success", "deleted": True})
+        else:
+            return jsonify({"error": "Template not found"}), 404
+
+    except Exception as e:
+        logger.error(f"Error deleting template: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/", methods=["GET"])
 def index():
     """Root endpoint."""
@@ -1366,9 +2323,15 @@ def index():
             "endpoints": {
                 "/health": "Health check",
                 "/extract": "Extract fields from document (POST with base64 image)",
+                "/extract-batch": "Extract fields in batches to avoid CPU overload (POST with batch_index)",
                 "/reextract-bbox": "Re-extract text from specific bbox (POST with image + bbox)",
                 "/extract-batch": "Extract multiple values from large bbox (POST with image + bbox + field_name)",
                 "/detect-text-bboxes": "Detect all OCR text bboxes for selection (POST with base64 image)",
+                "/apply-template-intelligent": "Apply template fields intelligently using model context (POST)",
+                "/templates/save": "Save vendor template for reuse (POST)",
+                "/templates/load/<vendor>": "Load saved vendor template (GET)",
+                "/templates/list": "List all saved templates (GET)",
+                "/templates/delete/<vendor>": "Delete vendor template (DELETE)",
             },
         }
     )

@@ -265,6 +265,259 @@ const DEFAULT_TEMPLATES = [
       },
     ],
   },
+  {
+    id: "template_customs_invoice",
+    name: "Customs Invoice",
+    description:
+      "Fields for customs/export invoices with exporter, importer, and line item details",
+    icon: "🌍",
+    fields: [
+      // Exporter fields
+      {
+        id: "field_exporter_name",
+        name: "Exporter Name",
+        key: "exporter_name",
+        type: "text",
+        question: "What is the vendor name?",
+        description: "Name of the exporter/shipper/seller",
+        required: true,
+        category: "exporter",
+        examples: ["Global Trade Corp", "Export Solutions Ltd"],
+      },
+      {
+        id: "field_exporter_address",
+        name: "Exporter Address",
+        key: "exporter_address",
+        type: "address",
+        question: "What is the vendor address?",
+        description: "Complete address of the exporter",
+        required: true,
+        category: "exporter",
+        examples: ["123 Export St, London, UK"],
+      },
+      {
+        id: "field_exporter_eori",
+        name: "Exporter EORI",
+        key: "exporter_eori",
+        type: "text",
+        question: "What is the vendor tax ID?",
+        description: "Economic Operator Registration and Identification number",
+        required: true,
+        category: "exporter",
+        examples: ["GB123456789000", "DE987654321000"],
+      },
+      {
+        id: "field_exporter_tax_id",
+        name: "Exporter VAT/Tax ID",
+        key: "exporter_tax_id",
+        type: "text",
+        question: "What is the VAT number?",
+        description: "VAT or Tax identification number",
+        required: true,
+        category: "exporter",
+        examples: ["GB999 9999 73", "DE123456789"],
+      },
+      // Importer fields
+      {
+        id: "field_importer_name",
+        name: "Importer Name",
+        key: "importer_name",
+        type: "text",
+        question: "What is the customer name?",
+        description: "Name of the importer/consignee/buyer",
+        required: true,
+        category: "importer",
+        examples: ["Import Trading Inc", "Customs Buyers Co"],
+      },
+      {
+        id: "field_importer_address",
+        name: "Importer Address",
+        key: "importer_address",
+        type: "address",
+        question: "What is the shipping address?",
+        description: "Complete address of the importer",
+        required: true,
+        category: "importer",
+        examples: ["456 Import Ave, New York, NY 10001"],
+      },
+      {
+        id: "field_importer_eori",
+        name: "Importer EORI",
+        key: "importer_eori",
+        type: "text",
+        question: "What is the customer tax ID?",
+        description: "Economic Operator Registration and Identification number",
+        required: true,
+        category: "importer",
+        examples: ["US123456789000", "FR987654321000"],
+      },
+      {
+        id: "field_importer_tax_id",
+        name: "Importer VAT/Tax ID",
+        key: "importer_tax_id",
+        type: "text",
+        question: "What is the tax ID?",
+        description: "VAT or Tax identification number",
+        required: true,
+        category: "importer",
+        examples: ["12-3456789", "FR12345678901"],
+      },
+      // Amount/Currency fields
+      {
+        id: "field_invoice_currency",
+        name: "Invoice Currency",
+        key: "invoice_currency",
+        type: "text",
+        question: "What is the currency?",
+        description: "ISO currency code",
+        required: true,
+        category: "amounts",
+        examples: ["USD", "EUR", "GBP"],
+      },
+      // Shipping/Weight fields
+      {
+        id: "field_total_gross_weight",
+        name: "Total Gross Weight",
+        key: "total_gross_weight",
+        type: "number",
+        question: "What is the total weight?",
+        description: "Total gross weight including packaging",
+        required: true,
+        category: "shipping",
+        validation: {
+          min: 0,
+        },
+        examples: ["150.5", "2500"],
+      },
+      {
+        id: "field_total_net_weight",
+        name: "Total Net Weight",
+        key: "total_net_weight",
+        type: "number",
+        question: "What is the net weight?",
+        description: "Total net weight of goods only",
+        required: true,
+        category: "shipping",
+        validation: {
+          min: 0,
+        },
+        examples: ["145.0", "2450"],
+      },
+      // Customs fields
+      {
+        id: "field_preferential_statement",
+        name: "Preferential Statement",
+        key: "preferential_statement",
+        type: "text",
+        question: "What is the origin statement?",
+        description: "Statement claiming preferential tariff treatment",
+        required: false,
+        category: "customs",
+        examples: ["REX Number: EU123456789"],
+      },
+      // Line item fields
+      {
+        id: "field_item_hs_code",
+        name: "HS Code",
+        key: "item_hs_code",
+        type: "text",
+        question: "What is the product code?",
+        description: "Harmonized System code for customs classification",
+        required: true,
+        category: "line_items",
+        examples: ["8517.62.00", "6203.42.11"],
+      },
+      {
+        id: "field_item_description",
+        name: "Item Description",
+        key: "item_description",
+        type: "text",
+        question: "What is the product description?",
+        description: "Detailed commercial description of the goods",
+        required: true,
+        category: "line_items",
+        examples: ["Smartphones", "Cotton trousers"],
+      },
+      {
+        id: "field_item_country_of_origin",
+        name: "Country of Origin",
+        key: "item_country_of_origin",
+        type: "text",
+        question: "What is the country of origin?",
+        description: "Where the item was manufactured/produced",
+        required: true,
+        category: "line_items",
+        examples: ["China", "Germany", "United States"],
+      },
+      {
+        id: "field_item_quantity",
+        name: "Quantity",
+        key: "item_quantity",
+        type: "number",
+        question: "What is the quantity?",
+        description: "Number of units",
+        required: true,
+        category: "line_items",
+        validation: {
+          min: 0,
+        },
+        examples: ["100", "500"],
+      },
+      {
+        id: "field_item_unit_of_measure",
+        name: "Unit of Measure",
+        key: "item_unit_of_measure",
+        type: "text",
+        question: "What is the unit of measure?",
+        description: "Unit of measurement",
+        required: true,
+        category: "line_items",
+        examples: ["PCS", "KGS", "M", "L"],
+      },
+      {
+        id: "field_item_unit_value",
+        name: "Unit Value",
+        key: "item_unit_value",
+        type: "currency",
+        question: "What is the unit price?",
+        description: "Price per single unit",
+        required: true,
+        category: "line_items",
+        validation: {
+          min: 0,
+        },
+        examples: ["25.00", "150.50"],
+      },
+      {
+        id: "field_item_net_weight",
+        name: "Item Net Weight",
+        key: "item_net_weight",
+        type: "number",
+        question: "What is the net weight?",
+        description: "Net weight of the line item",
+        required: true,
+        category: "line_items",
+        validation: {
+          min: 0,
+        },
+        examples: ["1.5", "25.0"],
+      },
+      {
+        id: "field_item_gross_weight",
+        name: "Item Gross Weight",
+        key: "item_gross_weight",
+        type: "number",
+        question: "What is the gross weight?",
+        description: "Gross weight including packaging",
+        required: true,
+        category: "line_items",
+        validation: {
+          min: 0,
+        },
+        examples: ["1.6", "26.5"],
+      },
+    ],
+  },
 ];
 
 class FieldService {
@@ -278,7 +531,30 @@ class FieldService {
   initializeTemplates() {
     const existing = localStorage.getItem(TEMPLATES_KEY);
     if (!existing) {
+      console.log("[FieldService] Initializing templates for first time");
       localStorage.setItem(TEMPLATES_KEY, JSON.stringify(DEFAULT_TEMPLATES));
+    } else {
+      console.log("[FieldService] Templates already exist in localStorage");
+      const stored = JSON.parse(existing);
+      console.log(
+        `[FieldService] Found ${stored.length} templates:`,
+        stored.map((t) => t.name)
+      );
+
+      // Check if we have all 4 templates OR if customs invoice needs update
+      const customsTemplate = stored.find(
+        (t) => t.id === "template_customs_invoice"
+      );
+      const needsUpdate =
+        stored.length < DEFAULT_TEMPLATES.length ||
+        (customsTemplate && !customsTemplate.fields[0].examples);
+
+      if (needsUpdate) {
+        console.log(
+          `[FieldService] ⚠️ Templates need update - re-initializing with latest version`
+        );
+        localStorage.setItem(TEMPLATES_KEY, JSON.stringify(DEFAULT_TEMPLATES));
+      }
     }
   }
 
@@ -448,6 +724,7 @@ class FieldService {
       question: field.question,
       required: field.required,
       type: field.type,
+      category: field.category || "other", // Include category for line item detection
     }));
 
     console.log("[FieldService] Formatted as questions:", questions);

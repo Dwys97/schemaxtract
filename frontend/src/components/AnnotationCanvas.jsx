@@ -17,6 +17,7 @@ import {
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import "./AnnotationCanvas.css";
+import templateService from "../services/templateService";
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
@@ -300,12 +301,18 @@ function AnnotationCanvas({ documentData }) {
   const [extractingFields, setExtractingFields] = useState([]); // Track which fields are currently being extracted
   const [ocrBboxes, setOcrBboxes] = useState([]); // Store OCR-detected text bboxes
   const [selectedOcrBboxes, setSelectedOcrBboxes] = useState([]); // Store selected OCR bbox IDs for batch creation
+  const [selectedOcrBbox, setSelectedOcrBbox] = useState(null); // Track single OCR bbox for drag/resize (different from multi-select)
   const [selectionMode, setSelectionMode] = useState(false); // Toggle for selecting OCR bboxes
   const [isSelectingArea, setIsSelectingArea] = useState(false); // Track if user is drawing selection rectangle
   const [selectionRect, setSelectionRect] = useState(null); // Selection rectangle for multi-select
+  const [vendorName, setVendorName] = useState(""); // Vendor name for template saving
+  const [showTemplateSave, setShowTemplateSave] = useState(false); // Show template save dialog
+  const [availableTemplates, setAvailableTemplates] = useState([]); // List of saved templates
+  const [showTemplateLoad, setShowTemplateLoad] = useState(false); // Show template load dialog
   const scrollPositionRef = useRef({ top: 0, left: 0 }); // Track scroll position
   const containerRef = useRef(null); // Document viewer reference (scrollable container)
   const shapeRefs = useRef({}); // Refs for each shape for transformer
+  const ocrShapeRefs = useRef({}); // Refs for OCR bbox shapes for transformer
   const transformerRef = useRef(null);
   const fieldsPaneRef = useRef(null);
   const fieldItemRefs = useRef({}); // Refs for field items in the left pane
@@ -439,6 +446,9 @@ function AnnotationCanvas({ documentData }) {
           },
         }));
 
+        // Deselect the field after re-extraction so bbox turns green
+        setSelectedField(null);
+
         return extractedText;
       } else {
         throw new Error(result.error || "Re-extraction failed");
@@ -499,18 +509,20 @@ function AnnotationCanvas({ documentData }) {
 
   // Effect to attach transformer when field selection changes
   useEffect(() => {
-    if (
-      selectedField &&
-      transformerRef.current &&
-      shapeRefs.current[selectedField.id]
-    ) {
+    if (!transformerRef.current) return;
+
+    // Priority: OCR bbox selection (for drag/resize) over field selection
+    if (selectedOcrBbox && ocrShapeRefs.current[selectedOcrBbox.id]) {
+      transformerRef.current.nodes([ocrShapeRefs.current[selectedOcrBbox.id]]);
+      transformerRef.current.getLayer()?.batchDraw();
+    } else if (selectedField && shapeRefs.current[selectedField.id]) {
       transformerRef.current.nodes([shapeRefs.current[selectedField.id]]);
       transformerRef.current.getLayer()?.batchDraw();
-    } else if (transformerRef.current) {
+    } else {
       transformerRef.current.nodes([]);
       transformerRef.current.getLayer()?.batchDraw();
     }
-  }, [selectedField]);
+  }, [selectedField, selectedOcrBbox]);
 
   // Preserve scroll position on state updates (except when zooming/selecting)
   useEffect(() => {
@@ -641,6 +653,11 @@ function AnnotationCanvas({ documentData }) {
       // Drawing selection rectangle for multi-select
       setIsSelectingArea(true);
       setSelectionRect({ x, y, width: 0, height: 0 });
+    } else {
+      // Normal view mode: clicking empty space deselects any selected field
+      if (selectedField) {
+        setSelectedField(null);
+      }
     }
   };
 
@@ -956,23 +973,37 @@ function AnnotationCanvas({ documentData }) {
       selectedOcrBboxes.includes(bbox.id)
     );
 
+    // Sort bboxes by Y-position (top to bottom) for proper ordering
+    const sortedBboxes = selectedBboxes.sort((a, b) => {
+      const aY = a.bbox[1]; // y1 coordinate (top of bbox)
+      const bY = b.bbox[1];
+      return aY - bY; // Ascending order (top to bottom)
+    });
+
+    console.log(
+      "Sorted bboxes by Y-position (top to bottom):",
+      sortedBboxes.map((b) => ({
+        id: b.id,
+        y: b.bbox[1],
+        text: b.text,
+      }))
+    );
+
     // Clear selection and exit selection mode immediately (non-blocking)
     setSelectedOcrBboxes([]);
     setSelectionMode(false);
 
     // Show toast notification
-    console.log(
-      `Extracting ${selectedBboxes.length} field(s) in background...`
-    );
+    console.log(`Extracting ${sortedBboxes.length} field(s) in background...`);
 
     // Extract fields asynchronously without blocking UI
-    selectedBboxes.forEach(async (ocrBbox, i) => {
+    sortedBboxes.forEach(async (ocrBbox, i) => {
       const fieldId = `custom_${Date.now()}_${i}_${Math.random()
         .toString(36)
         .substr(2, 9)}`;
 
       const finalFieldName =
-        selectedBboxes.length > 1 ? `${fieldName}_item_${i + 1}` : fieldName;
+        sortedBboxes.length > 1 ? `${fieldName}_item_${i + 1}` : fieldName;
 
       // Add to extracting list
       setExtractingFields((prev) => [...prev, fieldId]);
@@ -995,11 +1026,14 @@ function AnnotationCanvas({ documentData }) {
             page: currentPage,
             custom: true,
             fromOcr: true,
+            sortOrder: i, // Add sort order for consistent display
           };
 
           // Add field immediately when extraction completes
           setCustomFields((prev) => [...prev, newField]);
-          console.log(`✓ Extracted: ${finalFieldName} = "${extractedValue}"`);
+          console.log(
+            `✓ Extracted: ${finalFieldName} = "${extractedValue}" (Y-pos: ${ocrBbox.bbox[1]})`
+          );
         }
       } catch (error) {
         console.error(`Error extracting field ${finalFieldName}:`, error);
@@ -1011,8 +1045,515 @@ function AnnotationCanvas({ documentData }) {
 
     // Show confirmation that extraction started
     alert(
-      `Started extracting ${selectedBboxes.length} field(s). You can continue working while extraction completes in the background.`
+      `Started extracting ${sortedBboxes.length} field(s) in top-to-bottom order. You can continue working while extraction completes in the background.`
     );
+  };
+
+  // Suggest other columns on the same page based on selected fields (intelligent column detection)
+  const handleSuggestColumns = async () => {
+    const currentPageFields = customFields.filter(
+      (f) => f.page === currentPage && f.bbox
+    );
+
+    if (currentPageFields.length === 0) {
+      alert(
+        `No custom fields found on this page.\n\nCreate at least one column of fields first using "Select Text" mode.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Suggest other columns based on ${currentPageFields.length} field(s)?\n\n` +
+        `This will:\n` +
+        `• Analyze table structure on this page\n` +
+        `• Detect column headers if available\n` +
+        `• Find parallel columns with matching rows\n` +
+        `• Suggest field names from headers or positions`
+    );
+
+    if (!confirmed) return;
+
+    console.log(
+      `Suggesting columns on page ${currentPage} based on ${currentPageFields.length} template fields`
+    );
+
+    try {
+      // Call the intelligent template endpoint
+      const isCodespace = window.location.hostname.includes("github.dev");
+      const intelligentServiceUrl = isCodespace
+        ? window.location.origin.replace("-3000.", "-3002.") +
+          "/apply-template-intelligent"
+        : "http://localhost:3002/apply-template-intelligent";
+
+      console.log(`Calling intelligent service at: ${intelligentServiceUrl}`);
+
+      // Prepare template fields for the API
+      const templateFieldsData = currentPageFields.map((f) => ({
+        field_name: f.label || f.field_name,
+        value: f.value || "",
+        bbox: f.bbox,
+      }));
+
+      const response = await fetch(intelligentServiceUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64,
+          format: mimeType === "application/pdf" ? "pdf" : "png",
+          source_page: currentPage,
+          target_page: currentPage, // Same page for column detection
+          template_fields: templateFieldsData,
+          suggest_columns: true, // Enable column suggestion mode
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Column suggestion failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.status === "success") {
+        const suggestedFields = result.fields || [];
+
+        console.log(`✓ Received ${suggestedFields.length} suggested fields`);
+
+        // Add suggested fields to custom fields
+        let addedCount = 0;
+        for (const suggestedField of suggestedFields) {
+          const fieldId = `custom_${Date.now()}_${Math.random()
+            .toString(36)
+            .substr(2, 9)}`;
+
+          const newField = {
+            id: fieldId,
+            field_name: suggestedField.field_name,
+            label: suggestedField.field_name,
+            value: suggestedField.value,
+            bbox: suggestedField.bbox,
+            confidence: suggestedField.confidence,
+            page: currentPage,
+            custom: true,
+            fromColumnSuggestion: true,
+            columnHeader: suggestedField.column_header,
+          };
+
+          setCustomFields((prev) => [...prev, newField]);
+          addedCount++;
+
+          console.log(
+            `✓ Added suggested field: ${suggestedField.field_name} = "${
+              suggestedField.value
+            }" ${
+              suggestedField.column_header
+                ? `(header: ${suggestedField.column_header})`
+                : ""
+            }`
+          );
+        }
+
+        alert(
+          `Column suggestion complete!\n\n` +
+            `✓ Added ${addedCount} field(s) from ${result.fields.length} suggested columns\n\n` +
+            `${
+              suggestedFields.some((f) => f.column_header)
+                ? "Column headers detected and used for field names."
+                : "Field names generated from column positions."
+            }`
+        );
+      } else {
+        throw new Error(result.error || "Column suggestion failed");
+      }
+    } catch (error) {
+      console.error("Error in column suggestion:", error);
+      alert(
+        `Column suggestion failed: ${error.message}\n\nPlease try again or check the console for details.`
+      );
+    }
+  };
+
+  // Save current fields as a vendor template
+  const handleSaveTemplate = async () => {
+    if (customFields.length === 0) {
+      alert(
+        "No custom fields to save as template.\n\nCreate fields first using 'Select Text' mode."
+      );
+      return;
+    }
+
+    let vendor = vendorName.trim();
+    if (!vendor) {
+      vendor = prompt(
+        "Enter vendor name for this template:\n\n(e.g., 'acme_corp', 'vendor_a')\n\n" +
+          "This will save the current field layout for reuse on similar invoices."
+      );
+
+      if (!vendor) return; // User cancelled
+      vendor = vendor
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "_");
+      setVendorName(vendor);
+    }
+
+    try {
+      await templateService.saveTemplate(
+        vendor,
+        customFields.map((f) => ({
+          field_name: f.field_name || f.label,
+          bbox: f.bbox,
+          field_type: typeof f.value === "number" ? "number" : "text",
+          required: false,
+        })),
+        {
+          page_count: numPages,
+          description: `Template for ${vendor} invoices`,
+          field_count: customFields.length,
+        }
+      );
+
+      alert(
+        `✓ Template saved successfully!\n\nVendor: ${vendor}\nFields: ${customFields.length}\n\nYou can now load this template on similar invoices.`
+      );
+
+      // Refresh template list
+      const templates = await templateService.listTemplates();
+      setAvailableTemplates(templates);
+    } catch (error) {
+      console.error("Failed to save template:", error);
+      alert(`Failed to save template: ${error.message}`);
+    }
+  };
+
+  // Load a vendor template
+  const handleLoadTemplate = async (vendorToLoad) => {
+    let vendor = vendorToLoad;
+
+    if (!vendor) {
+      // Show list of available templates
+      try {
+        const templates = await templateService.listTemplates();
+        setAvailableTemplates(templates);
+
+        if (templates.length === 0) {
+          alert(
+            "No saved templates found.\n\nCreate and save templates first using 'Save Template' button."
+          );
+          return;
+        }
+
+        vendor = prompt(
+          `Available templates:\n${templates
+            .map((t, i) => `${i + 1}. ${t}`)
+            .join("\n")}\n\n` + "Enter vendor name to load:"
+        );
+
+        if (!vendor) return; // User cancelled
+      } catch (error) {
+        console.error("Failed to list templates:", error);
+        alert(`Failed to list templates: ${error.message}`);
+        return;
+      }
+    }
+
+    try {
+      const template = await templateService.loadTemplate(vendor);
+
+      if (!template) {
+        alert(`Template not found: ${vendor}`);
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Load template "${vendor}"?\n\n` +
+          `This will:\n` +
+          `• Add ${template.fields.length} field(s) to current page\n` +
+          `• Use saved field positions and names\n` +
+          `• Auto-extract values from document\n\n` +
+          `Current custom fields (${customFields.length}) will be preserved.`
+      );
+
+      if (!confirmed) return;
+
+      // Add template fields to current page
+      const newFields = template.fields.map((f) => ({
+        id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        field_name: f.field_name,
+        label: f.field_name,
+        bbox: f.bbox,
+        page: currentPage,
+        custom: true,
+        fromTemplate: true,
+        templateVendor: vendor,
+        value: "", // Will be extracted
+      }));
+
+      setCustomFields((prev) => [...prev, ...newFields]);
+      setVendorName(vendor);
+
+      // Auto-extract values for loaded fields
+      for (const field of newFields) {
+        await reextractTextFromBbox(field, field.bbox);
+      }
+
+      alert(
+        `✓ Template loaded successfully!\n\nVendor: ${vendor}\nAdded ${newFields.length} fields\n\nValues extracted automatically.`
+      );
+    } catch (error) {
+      console.error("Failed to load template:", error);
+      alert(`Failed to load template: ${error.message}`);
+    }
+  };
+
+  // Apply template from current page to next page (intelligent template + LLM + OCR alignment)
+  const handleApplyTemplateToNextPage = async () => {
+    const sourcePage = currentPage;
+    const targetPage = currentPage + 1;
+
+    if (!numPages || targetPage > numPages) {
+      alert("No next page available");
+      return;
+    }
+
+    // Get custom fields from current page only (template fields)
+    const templateFields = customFields.filter(
+      (f) => f.page === sourcePage && f.bbox
+    );
+
+    if (templateFields.length === 0) {
+      alert(
+        `No custom fields found on page ${sourcePage} to use as template.\n\nCreate fields on this page first using "Select Text" mode.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Apply ${templateFields.length} field template(s) from page ${sourcePage} to page ${targetPage}?\n\n` +
+        `This will:\n` +
+        `• Detect OCR text positions on page ${targetPage}\n` +
+        `• Intelligently align template bboxes with actual text\n` +
+        `• Handle layout shifts and varying item counts\n` +
+        `• Extract values using LLM intelligence`
+    );
+
+    if (!confirmed) return;
+
+    console.log(
+      `Applying ${templateFields.length} templates from page ${sourcePage} to page ${targetPage} with OCR alignment`
+    );
+
+    // Navigate to target page first
+    setCurrentPage(targetPage);
+
+    // Wait for page to load, then fetch OCR bboxes for target page
+    setTimeout(async () => {
+      try {
+        // Step 1: Fetch OCR bboxes for target page
+        console.log(`Fetching OCR bboxes for page ${targetPage}...`);
+        const isCodespace = window.location.hostname.includes("github.dev");
+        const ocrServiceUrl = isCodespace
+          ? window.location.origin.replace("-3000.", "-3002.") +
+            "/detect-text-bboxes"
+          : "http://localhost:3002/detect-text-bboxes";
+
+        const ocrResponse = await fetch(ocrServiceUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image: base64,
+            format: mimeType === "application/pdf" ? "pdf" : "png",
+            page: targetPage,
+            exclude_bboxes: [],
+          }),
+        });
+
+        if (!ocrResponse.ok) {
+          throw new Error(`OCR detection failed: ${ocrResponse.statusText}`);
+        }
+
+        const ocrData = await ocrResponse.json();
+        const targetPageOcrBboxes = ocrData.text_bboxes || [];
+        console.log(
+          `Found ${targetPageOcrBboxes.length} OCR bboxes on page ${targetPage}`
+        );
+
+        // Step 2: For each template field, find best matching OCR bbox or use template position
+        let successCount = 0;
+        let skippedCount = 0;
+        let alignedCount = 0;
+
+        for (const templateField of templateFields) {
+          const fieldId = `custom_${Date.now()}_${Math.random()
+            .toString(36)
+            .substr(2, 9)}`;
+
+          // Template bbox from source page
+          const templateBbox = templateField.bbox;
+
+          // Extract field name without page-specific suffixes
+          let baseFieldName = templateField.label || templateField.field_name;
+          baseFieldName = baseFieldName.replace(/_item_\d+$/, "");
+
+          // Calculate center Y position of template bbox (for vertical alignment)
+          const templateCenterY = (templateBbox[1] + templateBbox[3]) / 2;
+          const templateCenterX = (templateBbox[0] + templateBbox[2]) / 2;
+
+          // Find OCR bboxes near the template position (within ±150 normalized units in Y)
+          const nearbyOcrBboxes = targetPageOcrBboxes.filter((ocrBbox) => {
+            const ocrCenterY = (ocrBbox.bbox[1] + ocrBbox.bbox[3]) / 2;
+            const yDistance = Math.abs(ocrCenterY - templateCenterY);
+            return yDistance < 150; // Allow 15% vertical shift
+          });
+
+          // Choose bbox: use closest OCR bbox if available, otherwise use template bbox
+          let finalBbox = templateBbox;
+          let alignmentUsed = false;
+
+          if (nearbyOcrBboxes.length > 0) {
+            // Find closest OCR bbox by distance (both X and Y)
+            let closestBbox = nearbyOcrBboxes[0];
+            let minDistance = Infinity;
+
+            for (const ocrBbox of nearbyOcrBboxes) {
+              const ocrCenterY = (ocrBbox.bbox[1] + ocrBbox.bbox[3]) / 2;
+              const ocrCenterX = (ocrBbox.bbox[0] + ocrBbox.bbox[2]) / 2;
+              const distance = Math.sqrt(
+                Math.pow(ocrCenterX - templateCenterX, 2) +
+                  Math.pow(ocrCenterY - templateCenterY, 2)
+              );
+
+              if (distance < minDistance) {
+                minDistance = distance;
+                closestBbox = ocrBbox;
+              }
+            }
+
+            finalBbox = closestBbox.bbox;
+            alignmentUsed = true;
+            alignedCount++;
+            console.log(
+              `📍 Aligned ${baseFieldName}: template Y=${templateCenterY.toFixed(
+                0
+              )} → OCR Y=${(
+                (closestBbox.bbox[1] + closestBbox.bbox[3]) /
+                2
+              ).toFixed(0)} (shift: ${Math.abs(
+                templateCenterY -
+                  (closestBbox.bbox[1] + closestBbox.bbox[3]) / 2
+              ).toFixed(0)})`
+            );
+          } else {
+            console.log(
+              `⚠️  No nearby OCR bbox for ${baseFieldName}, using template position`
+            );
+          }
+
+          // Add to extracting list
+          setExtractingFields((prev) => [...prev, fieldId]);
+
+          try {
+            // Call donut service to extract from the final bbox
+            const donutServiceUrl = isCodespace
+              ? window.location.origin.replace("-3000.", "-3002.") +
+                "/reextract-bbox"
+              : "http://localhost:3002/reextract-bbox";
+
+            console.log(
+              `Extracting ${baseFieldName} from page ${targetPage}, ${
+                alignmentUsed ? "OCR-aligned" : "template"
+              } bbox:`,
+              finalBbox
+            );
+
+            const response = await fetch(donutServiceUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                image: base64,
+                format: mimeType === "application/pdf" ? "pdf" : "png",
+                bbox: finalBbox,
+                page: targetPage,
+              }),
+            });
+
+            if (!response.ok) {
+              throw new Error(`Extraction failed: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+
+            if (result.status === "success") {
+              const extractedValue = result.text;
+              const confidence = result.confidence;
+
+              // Intelligent filtering: Skip if extracted value is empty, whitespace, or very low confidence
+              const isEmpty =
+                !extractedValue ||
+                extractedValue.trim() === "" ||
+                extractedValue.trim() === "-";
+              const isLowConfidence = confidence < 0.3;
+
+              if (isEmpty || isLowConfidence) {
+                console.log(
+                  `⊘ Skipped empty/low-confidence field: ${baseFieldName} (value: "${extractedValue}", confidence: ${confidence})`
+                );
+                skippedCount++;
+              } else {
+                const newField = {
+                  id: fieldId,
+                  field_name: baseFieldName,
+                  label: baseFieldName,
+                  value: extractedValue,
+                  bbox: finalBbox,
+                  confidence: confidence,
+                  page: targetPage,
+                  custom: true,
+                  fromTemplate: true,
+                  templatePage: sourcePage,
+                  ocrAligned: alignmentUsed, // Track if OCR alignment was used
+                };
+
+                setCustomFields((prev) => [...prev, newField]);
+                console.log(
+                  `✓ Template applied: ${baseFieldName} = "${extractedValue}" (page ${targetPage}, ${
+                    alignmentUsed ? "OCR-aligned" : "template"
+                  }, confidence: ${(confidence * 100).toFixed(0)}%)`
+                );
+                successCount++;
+              }
+            }
+          } catch (error) {
+            console.error(
+              `Error applying template for ${baseFieldName}:`,
+              error
+            );
+            skippedCount++;
+          } finally {
+            setExtractingFields((prev) => prev.filter((id) => id !== fieldId));
+          }
+        }
+
+        // Show intelligent summary
+        alert(
+          `Template application complete!\n\n` +
+            `✓ Successfully applied: ${successCount} field(s)\n` +
+            `📍 OCR-aligned: ${alignedCount} field(s)\n` +
+            `⊘ Skipped (empty/no data): ${skippedCount} field(s)\n\n` +
+            `Extracted from page ${targetPage} with intelligent positioning.`
+        );
+      } catch (error) {
+        console.error("Error in template application:", error);
+        alert(
+          `Template application failed: ${error.message}\n\nPlease try again or check the console for details.`
+        );
+      }
+    }, 500); // Wait for page render
   };
 
   const handleFieldClick = (field) => {
@@ -1356,6 +1897,79 @@ function AnnotationCanvas({ documentData }) {
                 >
                   Next →
                 </button>
+                {/* Column Suggestion Button - for same page */}
+                {customFields.filter((f) => f.page === currentPage && f.bbox)
+                  .length > 0 && (
+                  <button
+                    className="btn-page"
+                    onClick={handleSuggestColumns}
+                    style={{
+                      backgroundColor: "#00bcd4",
+                      color: "white",
+                      marginLeft: "1rem",
+                      fontWeight: "bold",
+                    }}
+                    title={`Suggest other columns based on ${
+                      customFields.filter(
+                        (f) => f.page === currentPage && f.bbox
+                      ).length
+                    } selected field(s)`}
+                  >
+                    🔮 Suggest Columns
+                  </button>
+                )}
+                {/* Template Application Button - for next page */}
+                {customFields.filter((f) => f.page === currentPage && f.bbox)
+                  .length > 0 &&
+                  currentPage < numPages && (
+                    <button
+                      className="btn-page"
+                      onClick={handleApplyTemplateToNextPage}
+                      style={{
+                        backgroundColor: "#9c27b0",
+                        color: "white",
+                        marginLeft: "0.5rem",
+                        fontWeight: "bold",
+                      }}
+                      title={`Apply ${
+                        customFields.filter(
+                          (f) => f.page === currentPage && f.bbox
+                        ).length
+                      } field template(s) to page ${currentPage + 1}`}
+                    >
+                      🎯 Apply Template to Page {currentPage + 1}
+                    </button>
+                  )}
+                {/* Save Template Button */}
+                {customFields.length > 0 && (
+                  <button
+                    className="btn-page"
+                    onClick={handleSaveTemplate}
+                    style={{
+                      backgroundColor: "#4caf50",
+                      color: "white",
+                      marginLeft: "0.5rem",
+                      fontWeight: "bold",
+                    }}
+                    title="Save current field layout as reusable template"
+                  >
+                    💾 Save Template
+                  </button>
+                )}
+                {/* Load Template Button */}
+                <button
+                  className="btn-page"
+                  onClick={() => handleLoadTemplate()}
+                  style={{
+                    backgroundColor: "#ff9800",
+                    color: "white",
+                    marginLeft: "0.5rem",
+                    fontWeight: "bold",
+                  }}
+                  title="Load a saved vendor template"
+                >
+                  📂 Load Template
+                </button>
                 <div
                   style={{
                     marginLeft: "1rem",
@@ -1652,7 +2266,7 @@ function AnnotationCanvas({ documentData }) {
                                   );
                                 })}
 
-                              {/* Render OCR-detected text bboxes (selectable) */}
+                              {/* Render OCR-detected text bboxes (selectable, draggable, resizable) */}
                               {selectionMode &&
                                 ocrBboxes.map((ocrBbox) => {
                                   const pixels = normalizedToPixels(
@@ -1660,31 +2274,160 @@ function AnnotationCanvas({ documentData }) {
                                   );
                                   if (!pixels) return null;
 
-                                  const isSelected = selectedOcrBboxes.includes(
-                                    ocrBbox.id
-                                  );
+                                  const isMultiSelected =
+                                    selectedOcrBboxes.includes(ocrBbox.id);
+                                  const isTransformSelected =
+                                    selectedOcrBbox?.id === ocrBbox.id;
 
                                   return (
                                     <Rect
                                       key={ocrBbox.id}
+                                      ref={(el) => {
+                                        ocrShapeRefs.current[ocrBbox.id] = el;
+                                      }}
                                       x={pixels.x}
                                       y={pixels.y}
                                       width={pixels.width}
                                       height={pixels.height}
                                       stroke={
-                                        isSelected ? "#34c759" : "#ff9800"
+                                        isMultiSelected ? "#34c759" : "#ff9800"
                                       }
-                                      strokeWidth={isSelected ? 3 : 1.5}
+                                      strokeWidth={isMultiSelected ? 3 : 1.5}
                                       fill={
-                                        isSelected
+                                        isMultiSelected
                                           ? "rgba(52, 199, 89, 0.25)"
                                           : "rgba(255, 152, 0, 0.1)"
                                       }
                                       cornerRadius={2}
+                                      draggable={true}
+                                      name={`ocr-bbox-${ocrBbox.id}`}
                                       onClick={() =>
                                         handleOcrBboxClick(ocrBbox)
                                       }
                                       onTap={() => handleOcrBboxClick(ocrBbox)}
+                                      onDragStart={() => {
+                                        // Set as selected for transformation
+                                        setSelectedOcrBbox(ocrBbox);
+                                      }}
+                                      onDragMove={(e) => {
+                                        // Prevent drag from going outside bounds
+                                        const shape = e.target;
+                                        const x = shape.x();
+                                        const y = shape.y();
+                                        const width = shape.width();
+                                        const height = shape.height();
+
+                                        // Keep bbox within page bounds
+                                        shape.x(
+                                          Math.max(
+                                            0,
+                                            Math.min(pageWidth - width, x)
+                                          )
+                                        );
+                                        shape.y(
+                                          Math.max(
+                                            0,
+                                            Math.min(pageHeight - height, y)
+                                          )
+                                        );
+                                      }}
+                                      onDragEnd={(e) => {
+                                        // Update bbox position
+                                        const newX = e.target.x();
+                                        const newY = e.target.y();
+                                        const width = e.target.width();
+                                        const height = e.target.height();
+
+                                        // Convert back to normalized coordinates
+                                        const normalizedX1 = Math.round(
+                                          (newX / pageWidth) * 1000
+                                        );
+                                        const normalizedY1 = Math.round(
+                                          (newY / pageHeight) * 1000
+                                        );
+                                        const normalizedX2 = Math.round(
+                                          ((newX + width) / pageWidth) * 1000
+                                        );
+                                        const normalizedY2 = Math.round(
+                                          ((newY + height) / pageHeight) * 1000
+                                        );
+
+                                        const newBbox = [
+                                          normalizedX1,
+                                          normalizedY1,
+                                          normalizedX2,
+                                          normalizedY2,
+                                        ];
+
+                                        // Update the OCR bbox in the list
+                                        setOcrBboxes((prev) =>
+                                          prev.map((b) =>
+                                            b.id === ocrBbox.id
+                                              ? { ...b, bbox: newBbox }
+                                              : b
+                                          )
+                                        );
+
+                                        console.log(
+                                          `OCR bbox moved: ${ocrBbox.id}`,
+                                          newBbox
+                                        );
+                                      }}
+                                      onTransformEnd={(e) => {
+                                        // Update bbox size after resize
+                                        const node = e.target;
+                                        const scaleX = node.scaleX();
+                                        const scaleY = node.scaleY();
+
+                                        // Reset scale
+                                        node.scaleX(1);
+                                        node.scaleY(1);
+
+                                        const newWidth = node.width() * scaleX;
+                                        const newHeight =
+                                          node.height() * scaleY;
+
+                                        // Update the node dimensions
+                                        node.width(newWidth);
+                                        node.height(newHeight);
+
+                                        const normalizedX1 = Math.round(
+                                          (node.x() / pageWidth) * 1000
+                                        );
+                                        const normalizedY1 = Math.round(
+                                          (node.y() / pageHeight) * 1000
+                                        );
+                                        const normalizedX2 = Math.round(
+                                          ((node.x() + newWidth) / pageWidth) *
+                                            1000
+                                        );
+                                        const normalizedY2 = Math.round(
+                                          ((node.y() + newHeight) /
+                                            pageHeight) *
+                                            1000
+                                        );
+
+                                        const newBbox = [
+                                          normalizedX1,
+                                          normalizedY1,
+                                          normalizedX2,
+                                          normalizedY2,
+                                        ];
+
+                                        // Update the OCR bbox in the list
+                                        setOcrBboxes((prev) =>
+                                          prev.map((b) =>
+                                            b.id === ocrBbox.id
+                                              ? { ...b, bbox: newBbox }
+                                              : b
+                                          )
+                                        );
+
+                                        console.log(
+                                          `OCR bbox resized: ${ocrBbox.id}`,
+                                          newBbox
+                                        );
+                                      }}
                                       onContextMenu={(e) => {
                                         e.evt.preventDefault();
                                         const shouldDelete = window.confirm(
@@ -1705,6 +2448,12 @@ function AnnotationCanvas({ documentData }) {
                                               (id) => id !== ocrBbox.id
                                             )
                                           );
+                                          // Clear transform selection
+                                          if (
+                                            selectedOcrBbox?.id === ocrBbox.id
+                                          ) {
+                                            setSelectedOcrBbox(null);
+                                          }
                                           console.log(
                                             `Removed bbox: ${ocrBbox.id}`
                                           );
@@ -1714,7 +2463,7 @@ function AnnotationCanvas({ documentData }) {
                                         const container = e.target
                                           .getStage()
                                           .container();
-                                        container.style.cursor = "pointer";
+                                        container.style.cursor = "move";
                                       }}
                                       onMouseLeave={(e) => {
                                         const container = e.target

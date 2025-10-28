@@ -46,25 +46,90 @@ function App() {
       num_fields: data.fields?.length || 0,
     };
 
-    // Create new document entry
-    const newDocument = {
-      id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      filename: data.filename,
-      mimeType: data.mimeType,
-      base64: data.base64,
-      fields: data.fields,
-      extracted_text: data.extracted_text,
-      metadata: metadata,
-      status: "to_review",
-      uploadedAt: new Date().toISOString(),
-      labels: [],
-    };
+    // If this is a batch in progress, UPDATE existing document instead of creating new one
+    if (data.batchInProgress) {
+      console.log("[App] Batch in progress - updating existing document");
 
-    // Add to documents list
-    setDocuments((prev) => [newDocument, ...prev]);
+      setDocuments((prev) => {
+        // Check if document already exists (from priority batch)
+        const existingIndex = prev.findIndex(
+          (doc) =>
+            doc.base64 === data.base64 ||
+            (doc.filename === data.filename &&
+              Math.abs(new Date(doc.uploadedAt).getTime() - Date.now()) < 5000)
+        );
 
-    // Hide uploader and show document list
-    setShowUploader(false);
+        if (existingIndex !== -1) {
+          // Update existing document
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            fields: data.fields,
+            metadata: metadata,
+          };
+          return updated;
+        } else {
+          // First batch - create new document
+          const newDocument = {
+            id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            filename: data.filename,
+            mimeType: data.mimeType,
+            base64: data.base64,
+            fields: data.fields,
+            extracted_text: data.extracted_text,
+            metadata: metadata,
+            status: "to_review",
+            uploadedAt: new Date().toISOString(),
+            labels: [],
+          };
+          return [newDocument, ...prev];
+        }
+      });
+    } else {
+      // Final batch complete OR no batches - create or update document
+      console.log("[App] All batches complete - final document update");
+
+      setDocuments((prev) => {
+        // Check if document already exists
+        const existingIndex = prev.findIndex(
+          (doc) =>
+            doc.base64 === data.base64 ||
+            (doc.filename === data.filename &&
+              Math.abs(new Date(doc.uploadedAt).getTime() - Date.now()) < 10000)
+        );
+
+        if (existingIndex !== -1) {
+          // Update existing document with final fields
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...updated[existingIndex],
+            fields: data.fields,
+            metadata: metadata,
+          };
+          return updated;
+        } else {
+          // No batches were used - create new document
+          const newDocument = {
+            id: `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            filename: data.filename,
+            mimeType: data.mimeType,
+            base64: data.base64,
+            fields: data.fields,
+            extracted_text: data.extracted_text,
+            metadata: metadata,
+            status: "to_review",
+            uploadedAt: new Date().toISOString(),
+            labels: [],
+          };
+          return [newDocument, ...prev];
+        }
+      });
+    }
+
+    // Hide uploader and show document list (only on final update)
+    if (!data.batchInProgress) {
+      setShowUploader(false);
+    }
   };
 
   // Handle opening document for review

@@ -267,6 +267,76 @@ def lambda_handler_batch_extract(event, context):
         }
 
 
+def lambda_handler_progressive_batch(event, context):
+    """
+    AWS Lambda handler for progressive batch field extraction.
+    Extracts fields in batches to avoid CPU overload.
+    """
+    try:
+        # Parse request body
+        body = json.loads(event.get("body", "{}"))
+        base64_document = body.get("image") or body.get("document")
+        file_format = body.get("format", "pdf")
+        custom_fields = body.get("custom_fields", [])
+        batch_size = body.get("batch_size", 5)
+        batch_index = body.get("batch_index", 0)
+
+        if not base64_document:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                },
+                "body": json.dumps({"error": "No document provided"}),
+            }
+
+        logger.info(
+            f"Progressive batch extraction: batch {batch_index}, size {batch_size}, total fields {len(custom_fields)}"
+        )
+
+        # Call Donut service /extract-batch endpoint
+        response = requests.post(
+            f"{DONUT_SERVICE_URL}/extract-batch",
+            json={
+                "image": base64_document,
+                "format": file_format,
+                "custom_fields": custom_fields,
+                "batch_size": batch_size,
+                "batch_index": batch_index,
+            },
+            timeout=180,
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"Donut service returned {response.status_code}: {response.text}"
+            )
+
+        result = response.json()
+
+        # Forward the response from Donut service
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps(result),
+        }
+
+    except Exception as e:
+        logger.error(f"Progressive batch extraction error: {e}", exc_info=True)
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps({"error": "Internal server error", "message": str(e)}),
+        }
+
+
 # For local testing
 if __name__ == "__main__":
     # Test event

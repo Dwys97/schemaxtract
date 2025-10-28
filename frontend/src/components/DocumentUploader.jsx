@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import axios from "axios";
 import fieldService from "../services/fieldService";
+import batchAnnotationService from "../services/batchAnnotationService";
 import "./DocumentUploader.css";
 
 /**
@@ -19,6 +20,17 @@ function DocumentUploader({ onDocumentProcessed }) {
   const [error, setError] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Batch processing state
+  const [batchProgress, setBatchProgress] = useState({
+    isProcessing: false,
+    currentBatch: 0,
+    totalBatches: 0,
+    percentComplete: 0,
+    processedFields: 0,
+    totalFields: 0,
+    isPriorityBatch: false,
+  });
 
   // Handle file selection
   const handleFileChange = (event) => {
@@ -73,7 +85,7 @@ function DocumentUploader({ onDocumentProcessed }) {
     }
   };
 
-  // Process document upload
+  // Process document upload with optional batch field extraction
   const handleUpload = async () => {
     if (!selectedFile) {
       setError("Please select a file first");
@@ -96,29 +108,204 @@ function DocumentUploader({ onDocumentProcessed }) {
       console.log("Custom fields being sent:", customFields);
       console.log("Number of custom fields:", customFields.length);
 
-      // Send to backend with custom fields
-      const response = await axios.post("/api/process-document", {
+      // If no custom fields defined, use the original single-call approach
+      if (!customFields || customFields.length === 0) {
+        console.log(
+          "[Upload] No custom fields - using default backend extraction (5 priority questions)"
+        );
+
+        // Original approach: backend extracts default 5 priority fields
+        const response = await axios.post("/api/process-document", {
+          document: base64Data,
+          filename: selectedFile.name,
+          mimeType: selectedFile.type,
+          // No customFields - backend will use defaults
+        });
+
+        // Call parent callback with response data
+        if (onDocumentProcessed) {
+          onDocumentProcessed({
+            ...response.data,
+            filename: selectedFile.name,
+            mimeType: selectedFile.type,
+            base64: base64Data,
+          });
+        }
+
+        // Reset state
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+        setLoading(false);
+        return;
+      }
+
+      // BATCH EXTRACTION PATH: Custom fields are defined
+      console.log(
+        `[Upload] ${customFields.length} custom fields defined - using batch extraction`
+      );
+
+      // STEP 1: Get OCR/document structure first (without field extraction)
+      const ocrResponse = await axios.post("/api/process-document", {
         document: base64Data,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
-        customFields: customFields.length > 0 ? customFields : undefined,
+        // Don't send customFields - we'll extract them in batches
       });
 
-      // Call parent callback with response data
-      if (onDocumentProcessed) {
-        onDocumentProcessed({
-          ...response.data,
-          filename: selectedFile.name,
-          mimeType: selectedFile.type,
-          base64: base64Data,
-        });
-      }
+      console.log("[Upload] OCR Response:", ocrResponse.data);
 
-      // Reset state
-      setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      // Prepare document data with base64
+      const documentData = {
+        ...ocrResponse.data,
+        filename: selectedFile.name,
+        mimeType: selectedFile.type,
+        base64: base64Data,
+        fields: [], // Will be populated by batch extraction
+      };
+
+      // STEP 2: Start batch field extraction
+      setBatchProgress({
+        isProcessing: true,
+        currentBatch: 0,
+        totalBatches: Math.ceil(customFields.length / 5),
+        percentComplete: 0,
+        processedFields: 0,
+        totalFields: customFields.length,
+        isPriorityBatch: true,
+      });
+
+      // Setup batch callbacks
+      let allExtractedFields = [];
+      let isPriorityBatchComplete = false;
+
+      batchAnnotationService.onBatchComplete = (batchFields, batchInfo) => {
+        console.log(
+          `[Upload] Batch ${batchInfo.batchIndex || 0} complete:`,
+          batchFields
+        );
+
+        // Add fields to accumulated results
+        allExtractedFields = [...allExtractedFields, ...batchFields];
+
+        // Update progress
+        const batchNum =
+          batchInfo.batchIndex !== undefined ? batchInfo.batchIndex : 0;
+        const totalBatches = batchInfo.totalBatches || 1;
+
+        setBatchProgress({
+          isProcessing: true,
+          currentBatch: batchNum,
+          totalBatches: totalBatches,
+          percentComplete: Math.round((batchNum / totalBatches) * 100),
+          processedFields: allExtractedFields.length,
+          totalFields: batchInfo.totalFields,
+          isPriorityBatch: batchInfo.isPriorityBatch,
+        });
+
+        // After FIRST batch (priority fields), show document immediately
+        if (batchInfo.isPriorityBatch && !isPriorityBatchComplete) {
+          isPriorityBatchComplete = true;
+          console.log(
+            "[Upload] Priority batch complete! Showing document with first fields..."
+          );
+
+          // Send partial results to parent so user can view PDF NOW
+          if (onDocumentProcessed) {
+            onDocumentProcessed({
+              ...documentData,
+              fields: allExtractedFields, // First priority fields
+              batchInProgress: true, // Flag to indicate more coming
+            });
+          }
+        }
+      };
+
+      batchAnnotationService.onProgress = (progressInfo) => {
+        console.log(
+          `[Upload] Progress: ${progressInfo.percentComplete}% (${progressInfo.processedFields}/${progressInfo.totalFields})`
+        );
+      };
+
+      batchAnnotationService.onAllComplete = (allFields) => {
+        console.log("[Upload] All batches complete!", allFields);
+
+        // Final update with all fields - ONLY call this once
+        if (onDocumentProcessed) {
+          onDocumentProcessed({
+            ...documentData,
+            fields: allFields,
+          });
+        }
+
+        // Reset state
+        setBatchProgress({
+          isProcessing: false,
+          currentBatch: 0,
+          totalBatches: 0,
+          percentComplete: 100,
+          processedFields: allFields.length,
+          totalFields: allFields.length,
+          isPriorityBatch: false,
+        });
+
+        setLoading(false);
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      };
+
+      batchAnnotationService.onError = (errorInfo) => {
+        console.error("[Upload] Batch extraction failed:", errorInfo);
+
+        // If we have partial results, still show them
+        if (errorInfo.partialResults && errorInfo.partialResults.length > 0) {
+          if (onDocumentProcessed) {
+            onDocumentProcessed({
+              ...documentData,
+              fields: errorInfo.partialResults,
+              batchInProgress: false,
+            });
+          }
+
+          setError(
+            `Partial extraction: ${
+              errorInfo.partialResults.length
+            } fields extracted before error at batch ${
+              errorInfo.batchIndex + 1
+            }`
+          );
+        } else {
+          setError(
+            `Field extraction failed: ${errorInfo.message || "Unknown error"}`
+          );
+        }
+
+        setBatchProgress({
+          isProcessing: false,
+          currentBatch: 0,
+          totalBatches: 0,
+          percentComplete: 0,
+          processedFields: 0,
+          totalFields: 0,
+          isPriorityBatch: false,
+        });
+
+        setLoading(false);
+      };
+
+      // Start batch extraction (5 at a time, 500ms delays)
+      await batchAnnotationService.extractInBatches(
+        base64Data,
+        selectedFile.type.includes("pdf") ? "pdf" : "image",
+        customFields,
+        {
+          batchSize: 5,
+          delayMs: 500,
+        }
+      );
     } catch (err) {
       console.error("Upload error:", err);
       setError(
@@ -126,8 +313,16 @@ function DocumentUploader({ onDocumentProcessed }) {
           err.message ||
           "Failed to process document. Please try again."
       );
-    } finally {
       setLoading(false);
+      setBatchProgress({
+        isProcessing: false,
+        currentBatch: 0,
+        totalBatches: 0,
+        percentComplete: 0,
+        processedFields: 0,
+        totalFields: 0,
+        isPriorityBatch: false,
+      });
     }
   };
 
@@ -262,30 +457,78 @@ function DocumentUploader({ onDocumentProcessed }) {
       {/* Loading Details - показывается во время обработки */}
       {loading && (
         <div className="loading-details">
-          <div className="loading-steps">
-            <div className="loading-step">
-              <span className="step-icon">📄</span>
-              <span>Converting PDF to image...</span>
-            </div>
-            <div className="loading-step">
-              <span className="step-icon">🔍</span>
-              <span>Running OCR (Tesseract)...</span>
-            </div>
-            <div className="loading-step active">
-              <span className="step-icon">🤖</span>
-              <span>
-                DocVQA asking questions (invoice number, date, total, vendor,
-                customer)...
-              </span>
-            </div>
-            <div className="loading-step">
-              <span className="step-icon">📦</span>
-              <span>Matching answers to bounding boxes...</span>
-            </div>
-          </div>
-          <p className="loading-note">
-            ⏱️ DocVQA model inference takes 30-90 seconds. Please wait...
-          </p>
+          {!batchProgress.isProcessing ? (
+            // Phase 1: Initial OCR processing
+            <>
+              <div className="loading-steps">
+                <div className="loading-step active">
+                  <span className="step-icon">📄</span>
+                  <span>Converting PDF to image...</span>
+                </div>
+                <div className="loading-step active">
+                  <span className="step-icon">🔍</span>
+                  <span>Running OCR (Tesseract)...</span>
+                </div>
+                <div className="loading-step">
+                  <span className="step-icon">🤖</span>
+                  <span>Preparing field extraction...</span>
+                </div>
+              </div>
+              <p className="loading-note">
+                ⏱️ Processing document structure...
+              </p>
+            </>
+          ) : (
+            // Phase 2: Batch field extraction
+            <>
+              <div className="loading-steps">
+                <div className="loading-step completed">
+                  <span className="step-icon">✅</span>
+                  <span>OCR complete</span>
+                </div>
+                <div className="loading-step active">
+                  <span className="step-icon">🤖</span>
+                  <span>
+                    Extracting fields (Batch {batchProgress.currentBatch}/
+                    {batchProgress.totalBatches})
+                  </span>
+                </div>
+                {batchProgress.isPriorityBatch && (
+                  <div className="loading-step">
+                    <span className="step-icon">⭐</span>
+                    <span>Processing priority fields first...</span>
+                  </div>
+                )}
+              </div>
+              <div className="batch-progress-bar">
+                <div
+                  className="batch-progress-fill"
+                  style={{ width: `${batchProgress.percentComplete}%` }}
+                ></div>
+              </div>
+              <p className="loading-note">
+                {batchProgress.isPriorityBatch ? (
+                  <>
+                    ⭐ Extracting priority fields (
+                    {batchProgress.processedFields}/{batchProgress.totalFields}
+                    )
+                    <br />
+                    📄 Document will be viewable after first 5 fields...
+                  </>
+                ) : (
+                  <>
+                    🔄 Processing batch {batchProgress.currentBatch} of{" "}
+                    {batchProgress.totalBatches} (
+                    {batchProgress.percentComplete}
+                    % complete)
+                    <br />
+                    📊 {batchProgress.processedFields}/
+                    {batchProgress.totalFields} fields extracted
+                  </>
+                )}
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>
