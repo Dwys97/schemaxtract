@@ -45,6 +45,228 @@ const MemoizedPDFPage = React.memo(
 );
 
 /**
+ * NewFieldPopup Component
+ * Popup for creating or selecting a custom field for a manually drawn bbox
+ */
+const NewFieldPopup = ({
+  bbox,
+  pixelBbox,
+  zoom,
+  normalizedToPixels,
+  onConfirm,
+  onCancel,
+  existingFields,
+  batchMode,
+  batchFieldName,
+}) => {
+  const [fieldName, setFieldName] = useState(batchFieldName || "");
+  const [selectedExistingField, setSelectedExistingField] = useState(
+    batchFieldName || ""
+  );
+  const [isNewField, setIsNewField] = useState(!batchFieldName);
+
+  const pixels = normalizedToPixels(bbox);
+  if (!pixels) return null;
+
+  // Get unique field names from existing fields
+  const existingFieldNames = [
+    ...new Set(
+      existingFields.map((f) => f.label || f.field_name).filter(Boolean)
+    ),
+  ];
+
+  const handleSubmit = (continueDrawing = false, isBatchSplit = false) => {
+    const finalFieldName = isNewField
+      ? fieldName.trim()
+      : selectedExistingField;
+    if (!finalFieldName) {
+      alert("Please enter a field name or select an existing field");
+      return;
+    }
+    onConfirm(finalFieldName, isNewField, continueDrawing, isBatchSplit);
+  };
+
+  // In batch mode, show split option
+  if (batchMode && batchFieldName) {
+    return (
+      <div
+        className="bbox-popup"
+        style={{
+          position: "absolute",
+          left: `${(pixels.x + pixels.width) * zoom + 1}px`,
+          top: `${pixels.y * zoom}px`,
+          zIndex: 1000,
+          minWidth: "280px",
+        }}
+      >
+        <div className="bbox-popup-content" style={{ padding: "1rem" }}>
+          <p
+            className="bbox-popup-message"
+            style={{ marginBottom: "0.75rem", fontWeight: "bold" }}
+          >
+            Batch Split: {batchFieldName}
+          </p>
+          <p
+            style={{
+              fontSize: "0.875rem",
+              marginBottom: "0.75rem",
+              color: "rgba(255,255,255,0.7)",
+            }}
+          >
+            Auto-detect and split into multiple instances?
+          </p>
+          <div
+            className="bbox-popup-actions"
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+              justifyContent: "flex-end",
+            }}
+          >
+            <button
+              className="btn-popup btn-accept"
+              onClick={() => handleSubmit(false, true)}
+              title="Automatically split into multiple fields"
+              style={{
+                background: "#ff9800",
+                color: "white",
+                padding: "0.5rem 1rem",
+              }}
+            >
+              ✂️ Split & Extract
+            </button>
+            <button className="btn-popup btn-cancel" onClick={onCancel}>
+              ✗ Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="bbox-popup"
+      style={{
+        position: "absolute",
+        left: `${(pixels.x + pixels.width) * zoom + 1}px`,
+        top: `${pixels.y * zoom}px`,
+        zIndex: 1000,
+        minWidth: "250px",
+      }}
+    >
+      <div className="bbox-popup-content" style={{ padding: "1rem" }}>
+        <p
+          className="bbox-popup-message"
+          style={{ marginBottom: "0.75rem", fontWeight: "bold" }}
+        >
+          Custom Field
+        </p>
+
+        <div style={{ marginBottom: "0.75rem" }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <input
+              type="radio"
+              checked={isNewField}
+              onChange={() => setIsNewField(true)}
+            />
+            <span>Create new field</span>
+          </label>
+
+          {isNewField && (
+            <input
+              type="text"
+              placeholder="Field name (e.g., tax_id)"
+              value={fieldName}
+              onChange={(e) => setFieldName(e.target.value)}
+              autoFocus
+              style={{
+                width: "100%",
+                padding: "0.5rem",
+                border: "1px solid rgba(255, 255, 255, 0.3)",
+                borderRadius: "4px",
+                background: "rgba(255, 255, 255, 0.1)",
+                color: "inherit",
+                fontSize: "0.875rem",
+              }}
+              onKeyPress={(e) => {
+                if (e.key === "Enter") handleSubmit();
+              }}
+            />
+          )}
+        </div>
+
+        {existingFieldNames.length > 0 && (
+          <div style={{ marginBottom: "0.75rem" }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginBottom: "0.5rem",
+              }}
+            >
+              <input
+                type="radio"
+                checked={!isNewField}
+                onChange={() => setIsNewField(false)}
+              />
+              <span>Use existing field</span>
+            </label>
+
+            {!isNewField && (
+              <select
+                value={selectedExistingField}
+                onChange={(e) => setSelectedExistingField(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.5rem",
+                  border: "1px solid rgba(255, 255, 255, 0.3)",
+                  borderRadius: "4px",
+                  background: "rgba(255, 255, 255, 0.1)",
+                  color: "inherit",
+                  fontSize: "0.875rem",
+                }}
+              >
+                <option value="">Select a field...</option>
+                {existingFieldNames.map((name, idx) => (
+                  <option key={idx} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
+        <div
+          className="bbox-popup-actions"
+          style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}
+        >
+          <button
+            className="btn-popup btn-accept"
+            onClick={handleSubmit}
+            title="Extract text from bbox"
+          >
+            ✓ Extract
+          </button>
+          <button className="btn-popup btn-cancel" onClick={onCancel}>
+            ✗ Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
  * AnnotationCanvas Component (Tasks F & G)
  *
  * Dual-pane layout for document annotation:
@@ -66,14 +288,30 @@ function AnnotationCanvas({ documentData }) {
   const [reextractingField, setReextractingField] = useState(null); // Track which field is being re-extracted
   const [zoom, setZoom] = useState(1.0); // Zoom level (1.0 = 100%)
   const [pendingReextraction, setPendingReextraction] = useState(null); // Store bbox changes awaiting confirmation
+  const [drawingMode, setDrawingMode] = useState(false); // Toggle for drawing new bboxes
+  const [batchMode, setBatchMode] = useState(false); // Toggle for batch field creation
+  const [batchFieldName, setBatchFieldName] = useState(""); // Field name for batch mode
+  const [batchBboxes, setBatchBboxes] = useState([]); // Store multiple bboxes in batch mode
+  const [newBbox, setNewBbox] = useState(null); // Store the new bbox being drawn
+  const [isDrawing, setIsDrawing] = useState(false); // Track if user is currently drawing
+  const [pendingNewField, setPendingNewField] = useState(null); // Store new bbox awaiting field assignment
+  const [customFields, setCustomFields] = useState([]); // Store locally created custom fields
+  const [extractingBatch, setExtractingBatch] = useState(false); // Track batch extraction progress
+  const [extractingFields, setExtractingFields] = useState([]); // Track which fields are currently being extracted
+  const [ocrBboxes, setOcrBboxes] = useState([]); // Store OCR-detected text bboxes
+  const [selectedOcrBboxes, setSelectedOcrBboxes] = useState([]); // Store selected OCR bbox IDs for batch creation
+  const [selectionMode, setSelectionMode] = useState(false); // Toggle for selecting OCR bboxes
+  const [isSelectingArea, setIsSelectingArea] = useState(false); // Track if user is drawing selection rectangle
+  const [selectionRect, setSelectionRect] = useState(null); // Selection rectangle for multi-select
   const scrollPositionRef = useRef({ top: 0, left: 0 }); // Track scroll position
   const containerRef = useRef(null); // Document viewer reference (scrollable container)
   const shapeRefs = useRef({}); // Refs for each shape for transformer
   const transformerRef = useRef(null);
   const fieldsPaneRef = useRef(null);
+  const fieldItemRefs = useRef({}); // Refs for field items in the left pane
 
   // Extract fields from document data
-  const fields = documentData?.fields || [];
+  const fields = [...(documentData?.fields || []), ...customFields]; // Merge original and custom fields
   const extractedText = documentData?.extracted_text || "";
   const base64 = documentData?.base64 || "";
   const mimeType = documentData?.mimeType || "application/pdf";
@@ -291,12 +529,505 @@ function AnnotationCanvas({ documentData }) {
     return () => container.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Handle field selection
+  // Fetch OCR-detected text bboxes when entering selection mode
+  useEffect(() => {
+    if (!selectionMode || !documentData || !base64) {
+      return;
+    }
+
+    // Only fetch if we don't already have bboxes for this page
+    if (ocrBboxes.length > 0) {
+      console.log(`Using cached OCR bboxes: ${ocrBboxes.length}`);
+      return;
+    }
+
+    const fetchOcrBboxes = async () => {
+      try {
+        console.log("Fetching OCR bboxes for page", currentPage);
+
+        // Use environment-aware URL (codespace or localhost)
+        const isCodespace = window.location.hostname.includes("github.dev");
+        const donutServiceUrl = isCodespace
+          ? window.location.origin.replace("-3000.", "-3002.") +
+            "/detect-text-bboxes"
+          : "http://localhost:3002/detect-text-bboxes";
+
+        console.log("Calling Donut OCR service at:", donutServiceUrl);
+
+        // Get existing field bboxes to exclude from OCR detection
+        const existingBboxes = fields
+          .filter((f) => f.bbox && (!f.page || f.page === currentPage))
+          .map((f) => f.bbox);
+
+        console.log(
+          `Excluding ${existingBboxes.length} existing field bboxes from OCR detection`
+        );
+
+        // Send JSON payload with base64 data (consistent with other endpoints)
+        const response = await fetch(donutServiceUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            image: base64,
+            format: mimeType === "application/pdf" ? "pdf" : "png",
+            page: currentPage,
+            exclude_bboxes: existingBboxes,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(
+            `Failed to fetch OCR bboxes: ${response.status} - ${errorText}`
+          );
+        }
+
+        const data = await response.json();
+        console.log("OCR response data:", data);
+        console.log(
+          "OCR bboxes detected:",
+          data.text_bboxes?.length || 0,
+          "bboxes"
+        );
+        if (data.text_bboxes?.length > 0) {
+          console.log("First bbox sample:", data.text_bboxes[0]);
+        } else {
+          console.warn("No OCR bboxes detected. Response status:", data.status);
+        }
+        setOcrBboxes(data.text_bboxes || []);
+      } catch (error) {
+        console.error("Error fetching OCR bboxes:", error);
+        setOcrBboxes([]);
+      }
+    };
+
+    console.log("Triggering OCR bbox detection...");
+    fetchOcrBboxes();
+  }, [
+    selectionMode,
+    documentData,
+    base64,
+    mimeType,
+    currentPage,
+    ocrBboxes.length,
+  ]);
+
+  // Clear OCR bboxes when document changes
+  useEffect(() => {
+    setOcrBboxes([]);
+    setSelectedOcrBboxes([]);
+  }, [documentData]);
+
+  // Handle drawing new bbox OR selection rectangle
+  const handleStageMouseDown = (e) => {
+    // Don't interfere if clicking on an existing shape
+    const clickedOnEmpty = e.target === e.target.getStage();
+    if (!clickedOnEmpty) return;
+
+    const stage = e.target.getStage();
+    const pos = stage.getPointerPosition();
+
+    // Adjust for zoom
+    const x = pos.x / zoom;
+    const y = pos.y / zoom;
+
+    if (drawingMode) {
+      // Drawing new custom bbox
+      setIsDrawing(true);
+      setNewBbox({ x, y, width: 0, height: 0 });
+    } else if (selectionMode) {
+      // Drawing selection rectangle for multi-select
+      setIsSelectingArea(true);
+      setSelectionRect({ x, y, width: 0, height: 0 });
+    }
+  };
+
+  const handleStageMouseMove = (e) => {
+    const stage = e.target.getStage();
+    const pos = stage.getPointerPosition();
+
+    // Adjust for zoom
+    const x = pos.x / zoom;
+    const y = pos.y / zoom;
+
+    if (drawingMode && isDrawing && newBbox) {
+      setNewBbox({
+        x: newBbox.x,
+        y: newBbox.y,
+        width: x - newBbox.x,
+        height: y - newBbox.y,
+      });
+    } else if (selectionMode && isSelectingArea && selectionRect) {
+      setSelectionRect({
+        x: selectionRect.x,
+        y: selectionRect.y,
+        width: x - selectionRect.x,
+        height: y - selectionRect.y,
+      });
+    }
+  };
+
+  const handleStageMouseUp = () => {
+    if (drawingMode && isDrawing && newBbox) {
+      setIsDrawing(false);
+
+      // Only proceed if bbox has minimum size (at least 10x10 pixels)
+      if (Math.abs(newBbox.width) < 10 || Math.abs(newBbox.height) < 10) {
+        setNewBbox(null);
+        return;
+      }
+
+      // Normalize bbox (handle negative dimensions from drawing right-to-left or bottom-to-top)
+      const normalizedBbox = {
+        x: newBbox.width < 0 ? newBbox.x + newBbox.width : newBbox.x,
+        y: newBbox.height < 0 ? newBbox.y + newBbox.height : newBbox.y,
+        width: Math.abs(newBbox.width),
+        height: Math.abs(newBbox.height),
+      };
+
+      // Convert to normalized coordinates [0-1000]
+      const normalizedCoords = [
+        Math.round((normalizedBbox.x / pageWidth) * 1000),
+        Math.round((normalizedBbox.y / pageHeight) * 1000),
+        Math.round(
+          ((normalizedBbox.x + normalizedBbox.width) / pageWidth) * 1000
+        ),
+        Math.round(
+          ((normalizedBbox.y + normalizedBbox.height) / pageHeight) * 1000
+        ),
+      ];
+
+      // Show field selection popup
+      setPendingNewField({
+        bbox: normalizedCoords,
+        pixelBbox: normalizedBbox,
+      });
+
+      setNewBbox(null);
+      setDrawingMode(false); // Exit drawing mode after creating bbox
+    } else if (selectionMode && isSelectingArea && selectionRect) {
+      setIsSelectingArea(false);
+
+      // Only proceed if selection rect has minimum size
+      if (
+        Math.abs(selectionRect.width) < 10 ||
+        Math.abs(selectionRect.height) < 10
+      ) {
+        setSelectionRect(null);
+        return;
+      }
+
+      // Normalize selection rectangle
+      const normalizedRect = {
+        x:
+          selectionRect.width < 0
+            ? selectionRect.x + selectionRect.width
+            : selectionRect.x,
+        y:
+          selectionRect.height < 0
+            ? selectionRect.y + selectionRect.height
+            : selectionRect.y,
+        width: Math.abs(selectionRect.width),
+        height: Math.abs(selectionRect.height),
+      };
+
+      // Find all OCR bboxes that intersect with selection rectangle
+      const selectedIds = ocrBboxes
+        .filter((ocrBbox) => {
+          const pixels = normalizedToPixels(ocrBbox.bbox);
+          if (!pixels) return false;
+
+          // Check if bbox intersects with selection rectangle
+          const intersects = !(
+            pixels.x + pixels.width < normalizedRect.x ||
+            pixels.x > normalizedRect.x + normalizedRect.width ||
+            pixels.y + pixels.height < normalizedRect.y ||
+            pixels.y > normalizedRect.y + normalizedRect.height
+          );
+
+          return intersects;
+        })
+        .map((bbox) => bbox.id);
+
+      if (selectedIds.length > 0) {
+        // Found OCR bboxes in selection - add them to selection
+        setSelectedOcrBboxes((prev) => {
+          const newSelection = [...prev];
+          selectedIds.forEach((id) => {
+            if (!newSelection.includes(id)) {
+              newSelection.push(id);
+            }
+          });
+          return newSelection;
+        });
+      } else {
+        // No OCR bboxes found - user is manually drawing a missing bbox
+        // Convert to normalized coordinates and add as a manual OCR bbox
+        const normalizedCoords = [
+          Math.round((normalizedRect.x / pageWidth) * 1000),
+          Math.round((normalizedRect.y / pageHeight) * 1000),
+          Math.round(
+            ((normalizedRect.x + normalizedRect.width) / pageWidth) * 1000
+          ),
+          Math.round(
+            ((normalizedRect.y + normalizedRect.height) / pageHeight) * 1000
+          ),
+        ];
+
+        const manualBboxId = `manual_${Date.now()}`;
+        const manualBbox = {
+          id: manualBboxId,
+          text: "[Manual selection]",
+          bbox: normalizedCoords,
+          confidence: 1.0,
+          manual: true,
+        };
+
+        // Add to OCR bboxes list
+        setOcrBboxes((prev) => [...prev, manualBbox]);
+
+        // Auto-select the manual bbox
+        setSelectedOcrBboxes((prev) => [...prev, manualBboxId]);
+
+        console.log("Created manual bbox for missing text:", manualBbox);
+      }
+
+      setSelectionRect(null);
+    }
+  };
+
+  // Handle new field confirmation
+  const handleConfirmNewField = async (
+    fieldName,
+    isNewField,
+    continueDrawing,
+    isBatchSplit = false
+  ) => {
+    if (!pendingNewField) return;
+
+    const { bbox, pixelBbox } = pendingNewField;
+
+    // If batch split mode, extract multiple values from the large bbox
+    if (isBatchSplit) {
+      await handleBatchSplit(fieldName, bbox);
+      setPendingNewField(null);
+      setBatchMode(false);
+      setBatchFieldName("");
+      setDrawingMode(false);
+      return;
+    }
+
+    const fieldId = `custom_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
+    // Extract text from the new bbox
+    const extractedValue = await reextractTextFromBbox(
+      { label: fieldName, id: fieldId },
+      bbox
+    );
+
+    if (extractedValue !== null) {
+      // Create new custom field
+      const newField = {
+        id: fieldId,
+        field_name: fieldName,
+        label: fieldName,
+        value: extractedValue,
+        bbox: bbox,
+        confidence: 0.9, // Default confidence for custom fields
+        page: currentPage,
+        custom: true, // Mark as custom field
+      };
+
+      // Add to custom fields state
+      setCustomFields((prev) => [...prev, newField]);
+
+      console.log("Custom field created:", newField);
+    }
+
+    setPendingNewField(null);
+
+    // If in batch mode and user wants to continue, keep drawing mode active
+    if (batchMode && continueDrawing) {
+      // Drawing mode stays active
+      // Field name is already set in batchFieldName
+    } else {
+      // Exit batch mode and drawing mode
+      setBatchMode(false);
+      setBatchFieldName("");
+      setDrawingMode(false);
+    }
+  };
+
+  // Handle batch split - extract multiple values from a single large bbox
+  const handleBatchSplit = async (fieldName, bbox) => {
+    try {
+      setExtractingBatch(true);
+
+      // Call backend to get word-level OCR data
+      const response = await fetch("/api/extract-batch-fields", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document: base64,
+          mimeType: mimeType,
+          bbox: bbox,
+          fieldName: fieldName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Batch extraction failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Add each extracted field to custom fields
+      if (data.fields && data.fields.length > 0) {
+        const newFields = data.fields.map((field, index) => ({
+          id: `custom_${Date.now()}_${index}_${Math.random()
+            .toString(36)
+            .substr(2, 9)}`,
+          field_name: `${fieldName}_item_${index + 1}`,
+          label: `${fieldName}_item_${index + 1}`,
+          value: field.value,
+          bbox: field.bbox,
+          confidence: field.confidence || 0.9,
+          page: currentPage,
+          custom: true,
+          batch: true,
+          batchIndex: index + 1,
+        }));
+
+        setCustomFields((prev) => [...prev, ...newFields]);
+        console.log(`Created ${newFields.length} batch fields:`, newFields);
+        alert(
+          `Successfully created ${newFields.length} instances of "${fieldName}"`
+        );
+      } else {
+        alert("No values found in the selected area");
+      }
+    } catch (error) {
+      console.error("Batch split error:", error);
+      alert(`Failed to split bbox: ${error.message}`);
+    } finally {
+      setExtractingBatch(false);
+    }
+  };
+
+  const handleCancelNewField = () => {
+    setPendingNewField(null);
+    // If canceling in batch mode, exit both modes
+    if (batchMode) {
+      setBatchMode(false);
+      setBatchFieldName("");
+      setDrawingMode(false);
+    }
+  };
+
+  // Handle OCR bbox selection
+  const handleOcrBboxClick = (ocrBbox) => {
+    if (!selectionMode) return;
+
+    setSelectedOcrBboxes((prev) => {
+      const isSelected = prev.includes(ocrBbox.id);
+      if (isSelected) {
+        return prev.filter((id) => id !== ocrBbox.id);
+      } else {
+        return [...prev, ocrBbox.id];
+      }
+    });
+  };
+
+  // Create fields from selected OCR bboxes (non-blocking with progress indicator)
+  const handleCreateFieldsFromSelection = async () => {
+    if (selectedOcrBboxes.length === 0) {
+      alert("Please select at least one text bbox");
+      return;
+    }
+
+    const fieldName = prompt("Enter field name:");
+    if (!fieldName) return;
+
+    const selectedBboxes = ocrBboxes.filter((bbox) =>
+      selectedOcrBboxes.includes(bbox.id)
+    );
+
+    // Clear selection and exit selection mode immediately (non-blocking)
+    setSelectedOcrBboxes([]);
+    setSelectionMode(false);
+
+    // Show toast notification
+    console.log(
+      `Extracting ${selectedBboxes.length} field(s) in background...`
+    );
+
+    // Extract fields asynchronously without blocking UI
+    selectedBboxes.forEach(async (ocrBbox, i) => {
+      const fieldId = `custom_${Date.now()}_${i}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
+
+      const finalFieldName =
+        selectedBboxes.length > 1 ? `${fieldName}_item_${i + 1}` : fieldName;
+
+      // Add to extracting list
+      setExtractingFields((prev) => [...prev, fieldId]);
+
+      try {
+        // Extract text from bbox using Q&A model
+        const extractedValue = await reextractTextFromBbox(
+          { label: finalFieldName, id: fieldId },
+          ocrBbox.bbox
+        );
+
+        if (extractedValue !== null) {
+          const newField = {
+            id: fieldId,
+            field_name: finalFieldName,
+            label: finalFieldName,
+            value: extractedValue,
+            bbox: ocrBbox.bbox,
+            confidence: ocrBbox.confidence,
+            page: currentPage,
+            custom: true,
+            fromOcr: true,
+          };
+
+          // Add field immediately when extraction completes
+          setCustomFields((prev) => [...prev, newField]);
+          console.log(`✓ Extracted: ${finalFieldName} = "${extractedValue}"`);
+        }
+      } catch (error) {
+        console.error(`Error extracting field ${finalFieldName}:`, error);
+      } finally {
+        // Remove from extracting list
+        setExtractingFields((prev) => prev.filter((id) => id !== fieldId));
+      }
+    });
+
+    // Show confirmation that extraction started
+    alert(
+      `Started extracting ${selectedBboxes.length} field(s). You can continue working while extraction completes in the background.`
+    );
+  };
+
   const handleFieldClick = (field) => {
     const fieldKey = field.label || field.field_name || field.id;
     const isDeselecting = selectedField?.id === field.id;
 
     setSelectedField(isDeselecting ? null : field);
+
+    // Scroll the field item into view in the left pane
+    if (!isDeselecting && fieldItemRefs.current[field.id]) {
+      fieldItemRefs.current[field.id].scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
 
     // Navigate to the page containing the field if needed
     if (field.page && field.page !== currentPage) {
@@ -358,6 +1089,7 @@ function AnnotationCanvas({ documentData }) {
     return (
       <div
         key={field.id || index}
+        ref={(el) => (fieldItemRefs.current[field.id] = el)}
         className={`field-item ${isSelected ? "selected" : ""} ${
           hasBeenUpdated ? "updated" : ""
         }`}
@@ -474,6 +1206,133 @@ function AnnotationCanvas({ documentData }) {
         <div className="document-pane glass-card-elevated">
           <div className="pane-header">
             <h3>Document Preview</h3>
+            <div
+              style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+            >
+              <button
+                className={`btn-page ${
+                  drawingMode && !batchMode ? "active" : ""
+                }`}
+                onClick={() => {
+                  setDrawingMode(!drawingMode);
+                  setBatchMode(false);
+                  setBatchFieldName("");
+                }}
+                title={
+                  drawingMode ? "Cancel drawing" : "Draw single custom field"
+                }
+                style={{
+                  backgroundColor:
+                    drawingMode && !batchMode ? "#1976d2" : "transparent",
+                  color: drawingMode && !batchMode ? "white" : "inherit",
+                }}
+              >
+                {drawingMode && !batchMode ? "✗ Cancel" : "+ Single"}
+              </button>
+              <button
+                className={`btn-page ${batchMode ? "active" : ""}`}
+                onClick={() => {
+                  if (!batchMode) {
+                    // Entering batch mode
+                    const fieldName = prompt(
+                      "Enter field name for batch creation (e.g., 'hs_code'):"
+                    );
+                    if (fieldName && fieldName.trim()) {
+                      setBatchFieldName(fieldName.trim());
+                      setBatchMode(true);
+                      setDrawingMode(true);
+                    }
+                  } else {
+                    // Exiting batch mode
+                    setBatchMode(false);
+                    setBatchFieldName("");
+                    setDrawingMode(false);
+                  }
+                }}
+                title={
+                  batchMode
+                    ? `Exit batch mode (${batchFieldName})`
+                    : "Draw multiple instances of same field"
+                }
+                style={{
+                  backgroundColor: batchMode ? "#ff9800" : "transparent",
+                  color: batchMode ? "white" : "inherit",
+                }}
+              >
+                {batchMode ? `✗ Stop Batch (${batchFieldName})` : "+ Batch"}
+              </button>
+              <button
+                className={`btn-page ${selectionMode ? "active" : ""}`}
+                onClick={() => {
+                  if (!selectionMode) {
+                    setSelectionMode(true);
+                    setDrawingMode(false);
+                    setBatchMode(false);
+                    setBatchFieldName("");
+                    console.log(
+                      `Selection mode activated. ${ocrBboxes.length} OCR bboxes available for selection`
+                    );
+                  } else {
+                    setSelectionMode(false);
+                    setSelectedOcrBboxes([]);
+                  }
+                }}
+                title={
+                  selectionMode
+                    ? "Exit selection mode"
+                    : `Select OCR-detected text bboxes (${ocrBboxes.length} available)`
+                }
+                style={{
+                  backgroundColor: selectionMode ? "#34c759" : "transparent",
+                  color: selectionMode ? "white" : "inherit",
+                }}
+              >
+                {selectionMode
+                  ? `✓ ${selectedOcrBboxes.length} Selected`
+                  : `🔍 Select Text (${ocrBboxes.length})`}
+              </button>
+              {selectionMode && selectedOcrBboxes.length > 0 && (
+                <button
+                  className="btn-page"
+                  onClick={handleCreateFieldsFromSelection}
+                  style={{
+                    backgroundColor: "#1976d2",
+                    color: "white",
+                  }}
+                  title="Create fields from selected bboxes"
+                >
+                  ✓ Create {selectedOcrBboxes.length} Field
+                  {selectedOcrBboxes.length > 1 ? "s" : ""}
+                </button>
+              )}
+              {extractingFields.length > 0 && (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                    padding: "0.5rem 1rem",
+                    backgroundColor: "rgba(29, 114, 243, 0.1)",
+                    borderRadius: "4px",
+                    fontSize: "0.875rem",
+                    color: "#1976d2",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "12px",
+                      height: "12px",
+                      border: "2px solid #1976d2",
+                      borderTopColor: "transparent",
+                      borderRadius: "50%",
+                      animation: "spin 1s linear infinite",
+                    }}
+                  />
+                  Extracting {extractingFields.length} field
+                  {extractingFields.length > 1 ? "s" : ""}...
+                </div>
+              )}
+            </div>
             {numPages && (
               <div className="page-controls">
                 <button
@@ -569,13 +1428,11 @@ function AnnotationCanvas({ documentData }) {
                           <Stage
                             width={pageWidth}
                             height={pageHeight}
-                            onMouseDown={(e) => {
-                              // Adjust for CSS transform scale
-                              const stage = e.target.getStage();
-                              const pointerPos = stage.getPointerPosition();
-                              if (pointerPos) {
-                                // Konva will handle the rest
-                              }
+                            onMouseDown={handleStageMouseDown}
+                            onMouseMove={handleStageMouseMove}
+                            onMouseUp={handleStageMouseUp}
+                            style={{
+                              cursor: drawingMode ? "crosshair" : "default",
                             }}
                           >
                             <Layer>
@@ -794,6 +1651,127 @@ function AnnotationCanvas({ documentData }) {
                                     </React.Fragment>
                                   );
                                 })}
+
+                              {/* Render OCR-detected text bboxes (selectable) */}
+                              {selectionMode &&
+                                ocrBboxes.map((ocrBbox) => {
+                                  const pixels = normalizedToPixels(
+                                    ocrBbox.bbox
+                                  );
+                                  if (!pixels) return null;
+
+                                  const isSelected = selectedOcrBboxes.includes(
+                                    ocrBbox.id
+                                  );
+
+                                  return (
+                                    <Rect
+                                      key={ocrBbox.id}
+                                      x={pixels.x}
+                                      y={pixels.y}
+                                      width={pixels.width}
+                                      height={pixels.height}
+                                      stroke={
+                                        isSelected ? "#34c759" : "#ff9800"
+                                      }
+                                      strokeWidth={isSelected ? 3 : 1.5}
+                                      fill={
+                                        isSelected
+                                          ? "rgba(52, 199, 89, 0.25)"
+                                          : "rgba(255, 152, 0, 0.1)"
+                                      }
+                                      cornerRadius={2}
+                                      onClick={() =>
+                                        handleOcrBboxClick(ocrBbox)
+                                      }
+                                      onTap={() => handleOcrBboxClick(ocrBbox)}
+                                      onContextMenu={(e) => {
+                                        e.evt.preventDefault();
+                                        const shouldDelete = window.confirm(
+                                          `Remove this ${
+                                            ocrBbox.manual ? "manual" : "OCR"
+                                          } bbox?\n\nText: "${ocrBbox.text}"`
+                                        );
+                                        if (shouldDelete) {
+                                          // Remove from OCR bboxes list
+                                          setOcrBboxes((prev) =>
+                                            prev.filter(
+                                              (b) => b.id !== ocrBbox.id
+                                            )
+                                          );
+                                          // Remove from selection if selected
+                                          setSelectedOcrBboxes((prev) =>
+                                            prev.filter(
+                                              (id) => id !== ocrBbox.id
+                                            )
+                                          );
+                                          console.log(
+                                            `Removed bbox: ${ocrBbox.id}`
+                                          );
+                                        }
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        const container = e.target
+                                          .getStage()
+                                          .container();
+                                        container.style.cursor = "pointer";
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        const container = e.target
+                                          .getStage()
+                                          .container();
+                                        container.style.cursor = "default";
+                                      }}
+                                    />
+                                  );
+                                })}
+
+                              {/* Render bbox being drawn */}
+                              {newBbox && (
+                                <Rect
+                                  x={
+                                    newBbox.width < 0
+                                      ? newBbox.x + newBbox.width
+                                      : newBbox.x
+                                  }
+                                  y={
+                                    newBbox.height < 0
+                                      ? newBbox.y + newBbox.height
+                                      : newBbox.y
+                                  }
+                                  width={Math.abs(newBbox.width)}
+                                  height={Math.abs(newBbox.height)}
+                                  stroke="#ff9800"
+                                  strokeWidth={3}
+                                  fill="rgba(255, 152, 0, 0.2)"
+                                  dash={[10, 5]}
+                                  listening={false}
+                                />
+                              )}
+
+                              {/* Render selection rectangle for multi-select */}
+                              {selectionRect && (
+                                <Rect
+                                  x={
+                                    selectionRect.width < 0
+                                      ? selectionRect.x + selectionRect.width
+                                      : selectionRect.x
+                                  }
+                                  y={
+                                    selectionRect.height < 0
+                                      ? selectionRect.y + selectionRect.height
+                                      : selectionRect.y
+                                  }
+                                  width={Math.abs(selectionRect.width)}
+                                  height={Math.abs(selectionRect.height)}
+                                  stroke="#1d72f3"
+                                  strokeWidth={2}
+                                  fill="rgba(29, 114, 243, 0.1)"
+                                  dash={[5, 5]}
+                                  listening={false}
+                                />
+                              )}
+
                               {/* Transformer for resize handles - only show when field is selected */}
                               <Transformer
                                 ref={transformerRef}
@@ -884,6 +1862,21 @@ function AnnotationCanvas({ documentData }) {
                           </div>
                         </div>
                       )}
+
+                      {/* New Field Popup - for custom bbox creation */}
+                      {pendingNewField && (
+                        <NewFieldPopup
+                          bbox={pendingNewField.bbox}
+                          pixelBbox={pendingNewField.pixelBbox}
+                          zoom={zoom}
+                          normalizedToPixels={normalizedToPixels}
+                          onConfirm={handleConfirmNewField}
+                          onCancel={handleCancelNewField}
+                          existingFields={fields}
+                          batchMode={batchMode}
+                          batchFieldName={batchFieldName}
+                        />
+                      )}
                     </div>
                   </Document>
                 )}
@@ -905,7 +1898,14 @@ function AnnotationCanvas({ documentData }) {
                 {/* Konva Overlay for Images */}
                 {pageWidth && pageHeight && (
                   <div className="annotation-overlay">
-                    <Stage width={pageWidth} height={pageHeight}>
+                    <Stage
+                      width={pageWidth}
+                      height={pageHeight}
+                      onMouseDown={handleStageMouseDown}
+                      onMouseMove={handleStageMouseMove}
+                      onMouseUp={handleStageMouseUp}
+                      style={{ cursor: drawingMode ? "crosshair" : "default" }}
+                    >
                       <Layer>
                         {fields
                           .filter((field) => field.bbox)
@@ -936,9 +1936,47 @@ function AnnotationCanvas({ documentData }) {
                               />
                             );
                           })}
+
+                        {/* Render bbox being drawn */}
+                        {newBbox && (
+                          <Rect
+                            x={
+                              newBbox.width < 0
+                                ? newBbox.x + newBbox.width
+                                : newBbox.x
+                            }
+                            y={
+                              newBbox.height < 0
+                                ? newBbox.y + newBbox.height
+                                : newBbox.y
+                            }
+                            width={Math.abs(newBbox.width)}
+                            height={Math.abs(newBbox.height)}
+                            stroke="#ff9800"
+                            strokeWidth={3}
+                            fill="rgba(255, 152, 0, 0.2)"
+                            dash={[10, 5]}
+                            listening={false}
+                          />
+                        )}
                       </Layer>
                     </Stage>
                   </div>
+                )}
+
+                {/* New Field Popup - for custom bbox creation on images */}
+                {pendingNewField && (
+                  <NewFieldPopup
+                    bbox={pendingNewField.bbox}
+                    pixelBbox={pendingNewField.pixelBbox}
+                    zoom={zoom}
+                    normalizedToPixels={normalizedToPixels}
+                    onConfirm={handleConfirmNewField}
+                    onCancel={handleCancelNewField}
+                    existingFields={fields}
+                    batchMode={batchMode}
+                    batchFieldName={batchFieldName}
+                  />
                 )}
               </div>
             )}

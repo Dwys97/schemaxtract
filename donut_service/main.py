@@ -1012,6 +1012,350 @@ def reextract_bbox():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/extract-batch", methods=["POST"])
+def extract_batch():
+    """
+    Extract multiple field instances from a single large bbox using word-level OCR.
+    Automatically splits the bbox into individual values (e.g., multiple HS codes in a column).
+
+    Request body:
+        {
+            "image": "base64-encoded-document-data",
+            "format": "png|jpg|jpeg|pdf",
+            "bbox": [x1, y1, x2, y2],  # Normalized [0-1000] coordinates
+            "field_name": "field_name_base"
+        }
+
+    Returns:
+        {
+            "status": "success",
+            "fields": [
+                {"value": "...", "bbox": [...], "confidence": 0.95},
+                ...
+            ]
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if (
+            not data
+            or "image" not in data
+            or "bbox" not in data
+            or "field_name" not in data
+        ):
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        # Decode base64 document
+        doc_data = base64.b64decode(data["image"])
+        doc_format = data.get("format", "png").lower()
+        bbox = data["bbox"]  # [x1, y1, x2, y2] in normalized [0-1000] coordinates
+        field_name = data["field_name"]
+
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:
+            tmp.write(doc_data)
+            tmp_path = tmp.name
+
+        try:
+            # Convert PDF to image if needed
+            image_path = tmp_path
+            if doc_format == "pdf":
+                logger.info(f"Converting PDF to image for batch extraction")
+                images = convert_from_path(tmp_path, first_page=1, last_page=1, dpi=200)
+
+                if not images:
+                    return jsonify({"error": "PDF has no pages"}), 400
+
+                page_image_path = tmp_path.replace(".pdf", ".png")
+                images[0].save(page_image_path, "PNG")
+                image_path = page_image_path
+
+            # Open image to get dimensions
+            image = Image.open(image_path).convert("RGB")
+            img_width, img_height = image.size
+
+            # Convert normalized bbox [0-1000] to pixel coordinates
+            x1 = int((bbox[0] / 1000.0) * img_width)
+            y1 = int((bbox[1] / 1000.0) * img_height)
+            x2 = int((bbox[2] / 1000.0) * img_width)
+            y2 = int((bbox[3] / 1000.0) * img_height)
+
+            # Ensure coordinates are valid
+            x1, x2 = max(0, min(x1, img_width)), max(0, min(x2, img_width))
+            y1, y2 = max(0, min(y1, img_height)), max(0, min(y2, img_height))
+
+            # Crop image to bbox
+            cropped_image = image.crop((x1, y1, x2, y2))
+
+            logger.info(
+                f"Batch extracting from region: ({x1}, {y1}) to ({x2}, {y2}), size: {cropped_image.size}"
+            )
+
+            # Preprocess image
+            cropped_gray = cropped_image.convert("L")
+            from PIL import ImageEnhance
+
+            enhancer = ImageEnhance.Contrast(cropped_gray)
+            cropped_enhanced = enhancer.enhance(2.0)
+
+            # Upscale if needed
+            min_height = 50
+            if cropped_enhanced.size[1] < min_height:
+                scale_factor = min_height / cropped_enhanced.size[1]
+                new_size = (
+                    int(cropped_enhanced.size[0] * scale_factor),
+                    int(cropped_enhanced.size[1] * scale_factor),
+                )
+                cropped_enhanced = cropped_enhanced.resize(
+                    new_size, Image.Resampling.LANCZOS
+                )
+
+            # Get word-level OCR data using Tesseract
+            ocr_data = pytesseract.image_to_data(
+                cropped_enhanced,
+                output_type=pytesseract.Output.DICT,
+                config="--psm 6 --oem 3",  # psm 6: Assume uniform block of text
+            )
+
+            # Extract individual words/values with their bounding boxes
+            fields = []
+            for i in range(len(ocr_data["text"])):
+                text = ocr_data["text"][i].strip()
+                conf = int(ocr_data["conf"][i])
+
+                # Only keep text with good confidence and non-empty
+                if text and conf > 30:  # Lower threshold for batch extraction
+                    # Get word bounding box in cropped image
+                    word_x = ocr_data["left"][i]
+                    word_y = ocr_data["top"][i]
+                    word_w = ocr_data["width"][i]
+                    word_h = ocr_data["height"][i]
+
+                    # Convert back to full image coordinates
+                    abs_x1 = x1 + word_x
+                    abs_y1 = y1 + word_y
+                    abs_x2 = abs_x1 + word_w
+                    abs_y2 = abs_y1 + word_h
+
+                    # Convert to normalized coordinates [0-1000]
+                    norm_bbox = [
+                        int((abs_x1 / img_width) * 1000),
+                        int((abs_y1 / img_height) * 1000),
+                        int((abs_x2 / img_width) * 1000),
+                        int((abs_y2 / img_height) * 1000),
+                    ]
+
+                    fields.append(
+                        {"value": text, "bbox": norm_bbox, "confidence": conf / 100.0}
+                    )
+
+            logger.info(f"Batch extraction found {len(fields)} values")
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "fields": fields,
+                    "message": f"Extracted {len(fields)} instances",
+                }
+            )
+
+        finally:
+            # Cleanup temp files
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            if doc_format == "pdf" and os.path.exists(image_path):
+                os.unlink(image_path)
+
+    except Exception as e:
+        logger.error(f"Error in batch extraction: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/detect-text-bboxes", methods=["POST"])
+def detect_text_bboxes():
+    """
+    Detect all text bounding boxes in a document using OCR.
+    Returns all text elements with their bboxes for user selection.
+
+    Request body:
+        {
+            "image": "base64-encoded-document-data",
+            "format": "png|jpg|jpeg|pdf",
+            "page": 1,  # optional, for PDFs
+            "exclude_bboxes": [[x1,y1,x2,y2], ...]  # optional, already extracted field bboxes to exclude
+        }
+
+    Returns:
+        {
+            "status": "success",
+            "text_bboxes": [
+                {
+                    "id": "ocr_0",
+                    "text": "detected text",
+                    "bbox": [x1, y1, x2, y2],  # normalized [0-1000]
+                    "confidence": 0.95
+                },
+                ...
+            ],
+            "image_size": {"width": 1200, "height": 1600}
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if not data or "image" not in data:
+            return jsonify({"error": "Missing image data"}), 400
+
+        # Decode base64 document
+        doc_data = base64.b64decode(data["image"])
+        doc_format = data.get("format", "png").lower()
+        page_num = data.get("page", 1)
+        exclude_bboxes = data.get(
+            "exclude_bboxes", []
+        )  # Already extracted fields to exclude
+
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix=f".{doc_format}", delete=False) as tmp:
+            tmp.write(doc_data)
+            tmp_path = tmp.name
+
+        try:
+            # Convert PDF to image if needed
+            image_path = tmp_path
+            if doc_format == "pdf":
+                logger.info(
+                    f"Converting PDF page {page_num} to image for text detection"
+                )
+                images = convert_from_path(
+                    tmp_path, first_page=page_num, last_page=page_num, dpi=200
+                )
+
+                if not images:
+                    return jsonify({"error": "PDF has no pages"}), 400
+
+                page_image_path = tmp_path.replace(".pdf", ".png")
+                images[0].save(page_image_path, "PNG")
+                image_path = page_image_path
+
+            # Open image to get dimensions
+            image = Image.open(image_path).convert("RGB")
+            img_width, img_height = image.size
+
+            logger.info(f"Detecting text bboxes in {img_width}x{img_height} image")
+
+            # Don't resize - work with original image for accurate bboxes
+            # Use faster OCR settings instead
+            image_gray = image.convert("L")
+            from PIL import ImageEnhance
+
+            enhancer = ImageEnhance.Contrast(image_gray)
+            image_enhanced = enhancer.enhance(1.3)
+
+            # Get word-level OCR data using Tesseract
+            # PSM 6 = Uniform block of text
+            # OEM 1 = LSTM only (best accuracy)
+            logger.info("Running Tesseract OCR for text detection...")
+            ocr_data = pytesseract.image_to_data(
+                image_enhanced,
+                output_type=pytesseract.Output.DICT,
+                config="--psm 3 --oem 1",  # PSM 3 for better accuracy on complex layouts
+            )
+
+            # Helper function to check if bbox overlaps with existing fields
+            def overlaps_with_existing(bbox, existing_bboxes, threshold=0.5):
+                """Check if bbox significantly overlaps with any existing bbox"""
+                x1, y1, x2, y2 = bbox
+                area = (x2 - x1) * (y2 - y1)
+                if area == 0:
+                    return False
+
+                for ex_bbox in existing_bboxes:
+                    ex_x1, ex_y1, ex_x2, ex_y2 = ex_bbox
+                    # Calculate intersection
+                    int_x1 = max(x1, ex_x1)
+                    int_y1 = max(y1, ex_y1)
+                    int_x2 = min(x2, ex_x2)
+                    int_y2 = min(y2, ex_y2)
+
+                    if int_x1 < int_x2 and int_y1 < int_y2:
+                        intersection = (int_x2 - int_x1) * (int_y2 - int_y1)
+                        overlap_ratio = intersection / area
+                        if overlap_ratio > threshold:
+                            return True
+                return False
+
+            # Extract individual text elements with their bounding boxes
+            text_bboxes = []
+            bbox_id = 0
+            excluded_count = 0
+
+            for i in range(len(ocr_data["text"])):
+                text = ocr_data["text"][i].strip()
+                conf = int(ocr_data["conf"][i])
+
+                # Only keep text with reasonable confidence and non-empty
+                if text and conf > 30:  # Lower threshold for more detection
+                    # Get word bounding box in original image coordinates
+                    x = ocr_data["left"][i]
+                    y = ocr_data["top"][i]
+                    w = ocr_data["width"][i]
+                    h = ocr_data["height"][i]
+
+                    # Add padding around bbox to prevent text cutoff (3px on each side)
+                    padding_px = 3
+                    x = max(0, x - padding_px)
+                    y = max(0, y - padding_px)
+                    w = min(img_width - x, w + (padding_px * 2))
+                    h = min(img_height - y, h + (padding_px * 2))
+
+                    # Convert to normalized coordinates [0-1000]
+                    norm_bbox = [
+                        int((x / img_width) * 1000),
+                        int((y / img_height) * 1000),
+                        int(((x + w) / img_width) * 1000),
+                        int(((y + h) / img_height) * 1000),
+                    ]
+
+                    # Skip if overlaps with existing extracted fields
+                    if overlaps_with_existing(norm_bbox, exclude_bboxes):
+                        excluded_count += 1
+                        continue
+
+                    text_bboxes.append(
+                        {
+                            "id": f"ocr_{bbox_id}",
+                            "text": text,
+                            "bbox": norm_bbox,
+                            "confidence": conf / 100.0,
+                        }
+                    )
+                    bbox_id += 1
+
+            logger.info(
+                f"Detected {len(text_bboxes)} text bboxes (excluded {excluded_count} overlapping with existing fields)"
+            )
+
+            return jsonify(
+                {
+                    "status": "success",
+                    "text_bboxes": text_bboxes,
+                    "image_size": {"width": img_width, "height": img_height},
+                }
+            )
+
+        finally:
+            # Cleanup temp files
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            if doc_format == "pdf" and os.path.exists(image_path):
+                os.unlink(image_path)
+
+    except Exception as e:
+        logger.error(f"Error in text bbox detection: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/", methods=["GET"])
 def index():
     """Root endpoint."""
@@ -1023,6 +1367,8 @@ def index():
                 "/health": "Health check",
                 "/extract": "Extract fields from document (POST with base64 image)",
                 "/reextract-bbox": "Re-extract text from specific bbox (POST with image + bbox)",
+                "/extract-batch": "Extract multiple values from large bbox (POST with image + bbox + field_name)",
+                "/detect-text-bboxes": "Detect all OCR text bboxes for selection (POST with base64 image)",
             },
         }
     )

@@ -636,3 +636,62 @@
   transform: translateY(-1px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
+
+/* Drawing Mode Button */
+.btn-page.active {
+  background-color: #1976d2 !important;
+  color: white !important;
+  border-color: #1976d2 !important;
+  font-weight: 600;
+}
+
+.btn-page.active:hover {
+  background-color: #1565c0 !important;
+  border-color: #1565c0 !important;
+}
+
+/* Batch Mode Styling */
+.pane-header > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* New Field Popup Enhancements */
+.bbox-popup input[type="text"],
+.bbox-popup select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font-size: 0.875rem;
+  font-family: inherit;
+}
+
+.bbox-popup input[type="text"]:focus,
+.bbox-popup select:focus {
+  outline: none;
+  border-color: #1976d2;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.bbox-popup input[type="radio"] {
+  cursor: pointer;
+}
+
+.bbox-popup label {
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.bbox-popup select option {
+  background: #1e1e1e;
+  color: white;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

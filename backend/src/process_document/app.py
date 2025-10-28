@@ -173,6 +173,100 @@ def lambda_handler(event, context):
         }
 
 
+def lambda_handler_batch_extract(event, context):
+    """
+    AWS Lambda handler for batch field extraction from a large bbox.
+    Splits a single bbox into multiple field instances.
+    """
+    try:
+        # Parse request body
+        body = json.loads(event.get("body", "{}"))
+        base64_document = body.get("document")
+        bbox = body.get("bbox")  # Normalized [0-1000] coordinates
+        field_name = body.get("fieldName")
+        mime_type = body.get("mimeType", "application/pdf")
+
+        if not base64_document or not bbox or not field_name:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                },
+                "body": json.dumps(
+                    {"error": "Missing required parameters: document, bbox, fieldName"}
+                ),
+            }
+
+        logger.info(f"Batch extracting field: {field_name} from bbox: {bbox}")
+
+        # Decode Base64 document
+        document_binary = base64.b64decode(base64_document)
+
+        # Determine file format
+        file_format = "pdf"
+        if "image/png" in mime_type:
+            file_format = "png"
+        elif "image/jpeg" in mime_type or "image/jpg" in mime_type:
+            file_format = "jpg"
+
+        # Call Donut service with batch extraction request
+        doc_base64 = base64.b64encode(document_binary).decode("utf-8")
+
+        logger.info(f"Calling Donut service for batch extraction")
+        response = requests.post(
+            f"{DONUT_SERVICE_URL}/extract-batch",
+            json={
+                "image": doc_base64,
+                "format": file_format,
+                "bbox": bbox,
+                "field_name": field_name,
+            },
+            timeout=180,
+        )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"Donut batch extraction returned {response.status_code}: {response.text}"
+            )
+
+        result = response.json()
+
+        if result.get("status") != "success":
+            raise Exception(
+                f"Donut batch extraction failed: {result.get('error', 'Unknown error')}"
+            )
+
+        fields = result.get("fields", [])
+        logger.info(f"Batch extraction found {len(fields)} instances")
+
+        return {
+            "statusCode": 200,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps(
+                {
+                    "status": "success",
+                    "fields": fields,
+                    "message": f"Extracted {len(fields)} instances of {field_name}",
+                }
+            ),
+        }
+
+    except Exception as e:
+        logger.error(f"Error in batch extraction: {e}", exc_info=True)
+        return {
+            "statusCode": 500,
+            "headers": {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+            },
+            "body": json.dumps({"error": "Internal server error", "message": str(e)}),
+        }
+
+
 # For local testing
 if __name__ == "__main__":
     # Test event

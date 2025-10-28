@@ -50,11 +50,48 @@ Resources:
                 - logs:PutLogEvents
               Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
 
+  BatchExtractFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.12
+      CodeUri: src/process_document/
+      Handler: app.lambda_handler_batch_extract
+      MemorySize: 2048
+      Timeout: 300
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+          PYTHONUNBUFFERED: 1
+          DONUT_SERVICE_URL: "http://172.17.0.1:3002"
+      Events:
+        ExtractBatchFields:
+          Type: HttpApi
+          Properties:
+            Path: /extract-batch-fields
+            Method: post
+            TimeoutInMillis: 29000
+            PayloadFormatVersion: "2.0"
+      Policies:
+        - Statement:
+            - Sid: CloudWatchLogsPolicy
+              Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*"
+
   # CloudWatch Log Group for Lambda function
   OcrProcessorLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${OcrProcessorFunction}"
+      RetentionInDays: 7
+
+  BatchExtractLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${BatchExtractFunction}"
       RetentionInDays: 7
 
 Outputs:
