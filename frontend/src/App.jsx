@@ -3,13 +3,14 @@ import DocumentUploader from "./components/DocumentUploader";
 import DocumentList from "./components/DocumentList";
 import DocumentViewerModal from "./components/DocumentViewerModal";
 import FieldManager from "./components/FieldManager";
+import TemplateManager from "./components/TemplateManager";
 import "./App.css";
 
 function App() {
   const [documents, setDocuments] = useState([]);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [showUploader, setShowUploader] = useState(true);
-  const [currentView, setCurrentView] = useState("documents"); // 'documents' or 'fields'
+  const [currentView, setCurrentView] = useState("documents"); // 'documents', 'fields', or 'templates'
 
   // Load documents from localStorage on mount
   useEffect(() => {
@@ -216,6 +217,14 @@ function App() {
               >
                 📋 Fields
               </button>
+              <button
+                className={`btn-tab ${
+                  currentView === "templates" ? "active" : ""
+                }`}
+                onClick={() => setCurrentView("templates")}
+              >
+                🔖 Templates
+              </button>
               {currentView === "documents" && (
                 <button className="btn-primary" onClick={toggleUploader}>
                   {showUploader ? "Hide Uploader" : "Upload Document"}
@@ -244,6 +253,9 @@ function App() {
 
         {/* Field Manager View */}
         {currentView === "fields" && <FieldManager />}
+
+        {/* Template Manager View */}
+        {currentView === "templates" && <TemplateManager />}
 
         {/* Documents View */}
         {currentView === "documents" && (

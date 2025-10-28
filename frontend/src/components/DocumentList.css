@@ -486,6 +486,25 @@
   transform: translateY(-1px);
 }
 
+.template-btn {
+  padding: 6px;
+  background: rgba(175, 82, 222, 0.15);
+  border: 1px solid rgba(175, 82, 222, 0.3);
+  border-radius: 6px;
+  color: #af52de;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.template-btn:hover {
+  background: rgba(175, 82, 222, 0.25);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(175, 82, 222, 0.2);
+}
+
 .delete-btn {
   padding: 8px 12px;
   background: rgba(255, 59, 48, 0.1);

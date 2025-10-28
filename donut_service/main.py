@@ -404,15 +404,43 @@ def extract_invoice_fields_layoutlm(
         logger.info(f"OCR found {len(ocr_words)} words")
 
         # Define questions for invoice fields
-        # If custom fields provided, use ONLY those; otherwise use defaults
+        # Start with default fields, then add/override with custom fields
+        logger.info("Initializing with default invoice fields")
+        questions = {
+            "invoice_number": {
+                "question": "What is the invoice number?",
+                "category": "invoice",
+                "type": "text",
+            },
+            "invoice_date": {
+                "question": "What is the invoice date?",
+                "category": "invoice",
+                "type": "date",
+            },
+            "total_amount": {
+                "question": "What is the total amount?",
+                "category": "amounts",
+                "type": "currency",
+            },
+            "vendor_name": {
+                "question": "What is the vendor name?",
+                "category": "vendor",
+                "type": "text",
+            },
+            "po_number": {
+                "question": "What is the PO number?",
+                "category": "invoice",
+                "type": "text",
+            },
+        }
+        line_item_fields = []
+
+        # Add or override with custom fields if provided
         if custom_fields:
             logger.info(
-                f"Using {len(custom_fields)} custom field definitions (replacing defaults)"
+                f"Adding {len(custom_fields)} custom field definitions to defaults"
             )
             logger.info(f"Custom fields received: {custom_fields}")
-
-            questions = {}
-            line_item_fields = []  # Track line item fields separately
 
             for field in custom_fields:
                 field_key = field.get("key") or field.get("field_key")
@@ -430,39 +458,11 @@ def extract_invoice_fields_layoutlm(
                     if category == "line_items":
                         line_item_fields.append(field_key)
 
-                    logger.info(f"Added question for {field_key}: {question}")
+                    logger.info(f"Added/updated question for {field_key}: {question}")
                 else:
                     logger.warning(f"Skipping invalid field: {field}")
         else:
             logger.info("No custom fields provided - using only default questions")
-            questions = {
-                "invoice_number": {
-                    "question": "What is the invoice number?",
-                    "category": "invoice",
-                    "type": "text",
-                },
-                "invoice_date": {
-                    "question": "What is the invoice date?",
-                    "category": "invoice",
-                    "type": "date",
-                },
-                "total_amount": {
-                    "question": "What is the total amount?",
-                    "category": "amounts",
-                    "type": "currency",
-                },
-                "vendor_name": {
-                    "question": "What is the vendor name?",
-                    "category": "vendor",
-                    "type": "text",
-                },
-                "po_number": {
-                    "question": "What is the PO number?",
-                    "category": "invoice",
-                    "type": "text",
-                },
-            }
-            line_item_fields = []
 
         fields = []
         field_id = start_field_id

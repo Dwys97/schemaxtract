@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import annotationService from "../services/annotationService";
+import templateService from "../services/templateService";
 import "./DocumentList.css";
 
 /**
@@ -64,6 +65,24 @@ function DocumentList({
   // Handle info button click
   const handleShowInfo = (doc) => {
     setSelectedDocForInfo(doc);
+  };
+
+  // Handle save as template
+  const handleSaveAsTemplate = (doc) => {
+    try {
+      const templateName = prompt(
+        'Enter template name (or leave blank to auto-generate):',
+        templateService.suggestTemplateName(doc)
+      );
+      
+      if (templateName === null) return; // User cancelled
+      
+      const template = templateService.saveAsTemplate(doc, templateName || undefined);
+      alert(`✓ Template saved: ${template.name}\n\nThis document will now be used as a reference for similar invoices.`);
+    } catch (error) {
+      console.error("Save template failed:", error);
+      alert(`Failed to save template: ${error.message}`);
+    }
   };
 
   // Status filter counts
@@ -518,6 +537,26 @@ function DocumentList({
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                              />
+                            </svg>
+                          </button>
+                          <button
+                            className="template-btn"
+                            onClick={() => handleSaveAsTemplate(doc)}
+                            title="Save as template for few-shot learning"
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"
                               />
                             </svg>
                           </button>
