@@ -669,10 +669,16 @@ def merge_line_words(words: list) -> dict:
 
 
 def extract_fields_with_donut(
-    image_path: str, custom_fields: list = None, start_field_id: int = 1
+    image_path: str, custom_fields: list = None, start_field_id: int = 1, template_hints: dict = None
 ) -> Dict[str, Any]:
     """
     Extract invoice fields using Impira LayoutLM Document Q&A model.
+    
+    Args:
+        image_path: Path to image file
+        custom_fields: List of field definitions with questions
+        start_field_id: Starting ID for fields
+        template_hints: Optional template hints for few-shot learning with bbox suggestions
 
     New Strategy (LayoutLM Q&A):
     - Use pre-trained invoice model that handles OCR internally
@@ -1051,10 +1057,14 @@ def extract_document_batch():
         custom_fields = data.get("custom_fields", [])
         batch_size = data.get("batch_size", 5)
         batch_index = data.get("batch_index", 0)
+        template_hints = data.get("template_hints", None)  # Few-shot learning hints
 
         logger.info(
             f"[/extract-batch] Processing batch {batch_index} with {len(custom_fields)} total fields"
         )
+        
+        if template_hints:
+            logger.info(f"[/extract-batch] Using template '{template_hints.get('template_name')}' with {len(template_hints.get('field_hints', []))} bbox hints")
 
         # Sort fields by priority: required fields first
         priority_fields = [f for f in custom_fields if f.get("required", False)]
@@ -1116,7 +1126,12 @@ def extract_document_batch():
 
             logger.info(f"[/extract-batch] Starting field IDs from {start_field_id}")
 
-            result = extract_fields_with_donut(tmp_path, batch_fields, start_field_id)
+            result = extract_fields_with_donut(
+                tmp_path, 
+                batch_fields, 
+                start_field_id,
+                template_hints=template_hints  # Pass template hints for few-shot learning
+            )
 
             logger.info(
                 f"[/extract-batch] Extracted {len(result.get('fields', []))} fields from batch {batch_index}"

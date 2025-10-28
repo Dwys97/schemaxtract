@@ -26,26 +26,33 @@ function App() {
 
   // Save documents to localStorage whenever they change
   useEffect(() => {
+    console.log("[App] Documents changed, count:", documents.length);
     if (documents.length > 0) {
       localStorage.setItem("schemaxtract_documents", JSON.stringify(documents));
+      console.log("[App] Saved to localStorage");
     }
   }, [documents]);
 
   // Handle document processing completion from DocumentUploader
   const handleDocumentProcessed = (data) => {
     console.log("Document processed:", data);
+    console.log("Data keys:", Object.keys(data));
+    console.log("Fields:", data.fields);
+    console.log("Batch in progress:", data.batchInProgress);
 
     // Extract metadata from fields
     const metadata = {
       invoice_id:
-        data.fields?.find((f) => f.field_name === "invoice_number")?.value ||
+        data.fields?.find((f) => f.field_name === "invoice_number" || f.label === "invoice_number")?.value ||
         null,
       issue_date:
-        data.fields?.find((f) => f.field_name === "invoice_date")?.value ||
+        data.fields?.find((f) => f.field_name === "invoice_date" || f.label === "invoice_date")?.value ||
         null,
-      total: data.fields?.find((f) => f.field_name === "total")?.value || null,
+      total: data.fields?.find((f) => f.field_name === "total" || f.label === "total_amount")?.value || null,
       num_fields: data.fields?.length || 0,
     };
+
+    console.log("Extracted metadata:", metadata);
 
     // If this is a batch in progress, UPDATE existing document instead of creating new one
     if (data.batchInProgress) {
@@ -83,6 +90,7 @@ function App() {
             uploadedAt: new Date().toISOString(),
             labels: [],
           };
+          console.log("[App] Creating new document (batch in progress):", newDocument.id, newDocument.status);
           return [newDocument, ...prev];
         }
       });
@@ -122,6 +130,8 @@ function App() {
             uploadedAt: new Date().toISOString(),
             labels: [],
           };
+          console.log("[App] Creating new document (final):", newDocument.id, newDocument.status);
+          console.log("[App] Document count will be:", prev.length + 1);
           return [newDocument, ...prev];
         }
       });

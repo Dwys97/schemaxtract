@@ -29,6 +29,7 @@ export class BatchAnnotationService {
       batchSize = BATCH_SIZE,
       delayMs = BATCH_DELAY_MS,
       startFromBatch = 0,
+      templateHints = null, // Template hints for few-shot learning
     } = options;
 
     try {
@@ -36,7 +37,12 @@ export class BatchAnnotationService {
         totalFields: customFields.length,
         batchSize,
         startFromBatch,
+        hasTemplateHints: !!templateHints,
       });
+
+      if (templateHints) {
+        console.log(`[BatchAnnotation] Using template: ${templateHints.template_name} with ${templateHints.field_hints.length} hints`);
+      }
 
       // Sort fields: required first (priority), then optional
       const priorityFields = customFields.filter((f) => f.required === true);
@@ -79,7 +85,7 @@ export class BatchAnnotationService {
         }
 
         try {
-          // Call batch extraction endpoint
+          // Call batch extraction endpoint with template hints
           const response = await fetch(BATCH_EXTRACT_URL, {
             method: "POST",
             headers: {
@@ -91,6 +97,7 @@ export class BatchAnnotationService {
               custom_fields: sortedFields, // Send all, backend will slice
               batch_size: batchSize,
               batch_index: batchIndex,
+              template_hints: templateHints, // Pass template hints for few-shot learning
             }),
           });
 

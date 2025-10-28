@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import axios from "axios";
 import fieldService from "../services/fieldService";
 import batchAnnotationService from "../services/batchAnnotationService";
+import templateService from "../services/templateService";
 import "./DocumentUploader.css";
 
 /**
@@ -165,7 +166,35 @@ function DocumentUploader({ onDocumentProcessed }) {
         fields: [], // Will be populated by batch extraction
       };
 
-      // STEP 2: Start batch field extraction
+      // STEP 1.5: Find matching templates for few-shot learning
+      console.log("[Upload] Looking for matching templates...");
+      const matchingTemplates = templateService.findMatchingTemplates(
+        customFields.map(f => ({ label: f.field_key })),
+        1 // Get top 1 match
+      );
+
+      let templateHints = null;
+      if (matchingTemplates.length > 0) {
+        const bestTemplate = matchingTemplates[0].template;
+        console.log(`[Upload] Found matching template: ${bestTemplate.name} (score: ${matchingTemplates[0].score.toFixed(2)})`);
+        console.log(`[Upload] Template has ${bestTemplate.fields.length} fields with bbox hints`);
+        
+        // Convert template to hints format for backend
+        templateHints = {
+          template_id: bestTemplate.id,
+          template_name: bestTemplate.name,
+          field_hints: bestTemplate.fields.map(f => ({
+            field_key: f.label,
+            bbox: f.bbox,
+            typical_value: f.value,
+            confidence: f.confidence
+          }))
+        };
+      } else {
+        console.log("[Upload] No matching templates found");
+      }
+
+      // STEP 2: Start batch field extraction with template hints
       setBatchProgress({
         isProcessing: true,
         currentBatch: 0,
@@ -296,14 +325,15 @@ function DocumentUploader({ onDocumentProcessed }) {
         setLoading(false);
       };
 
-      // Start batch extraction (5 at a time, 500ms delays)
+            // Start batch extraction (5 at a time, 500ms delays)
       await batchAnnotationService.extractInBatches(
         base64Data,
-        selectedFile.type.includes("pdf") ? "pdf" : "image",
+        selectedFile.type.includes("pdf") ? "pdf" : "png",
         customFields,
         {
           batchSize: 5,
           delayMs: 500,
+          templateHints: templateHints // Pass template hints to backend
         }
       );
     } catch (err) {
