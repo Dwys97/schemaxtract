@@ -147,52 +147,32 @@ function DocumentUploader({ onDocumentProcessed }) {
         `[Upload] ${customFields.length} custom fields defined - using batch extraction`
       );
 
-      // STEP 1: Get OCR/document structure first (without field extraction)
+      // STEP 1: Get OCR + default field extraction first
+      // This runs OCR and extracts priority fields (vendor, invoice_number, etc.)
+      console.log("[Upload] Step 1: Running OCR and extracting priority fields...");
       const ocrResponse = await axios.post("/api/process-document", {
         document: base64Data,
         filename: selectedFile.name,
         mimeType: selectedFile.type,
-        // Don't send customFields - we'll extract them in batches
+        // Don't send customFields yet - we want default fields for template matching
       });
 
       console.log("[Upload] OCR Response:", ocrResponse.data);
 
-      // Prepare document data with base64
-      const documentData = {
-        ...ocrResponse.data,
-        filename: selectedFile.name,
-        mimeType: selectedFile.type,
-        base64: base64Data,
-        fields: [], // Will be populated by batch extraction
-      };
-
-      // STEP 1.5: Find matching templates for few-shot learning
-      console.log("[Upload] Looking for matching templates...");
+      // STEP 1.5: Find matching templates using extracted fields
+      console.log("[Upload] Step 1.5: Looking for matching templates...");
       
-      // Extract OCR text to search for vendor name
-      const ocrText = ocrResponse.data?.text || "";
-      console.log(`[Upload] OCR text length: ${ocrText.length} chars`);
+      const extractedFields = ocrResponse.data?.fields || [];
+      console.log(`[Upload] Extracted ${extractedFields.length} priority fields from OCR`);
       
-      // Create mock fields from custom field definitions for template matching
-      // We'll use the OCR text to search, but need field structure
-      const mockFieldsForMatching = customFields.map(f => ({ 
-        label: f.field_key,
-        value: "" // Will match based on field structure and any vendor in OCR
-      }));
-      
-      // Add vendor from OCR if we can extract it
-      const vendorMatch = ocrText.match(/(?:from|vendor|supplier|seller)[\s:]+([A-Z][A-Za-z\s&.,]+?)(?:\n|invoice|date|PO)/i);
-      if (vendorMatch && vendorMatch[1]) {
-        const vendorName = vendorMatch[1].trim();
-        console.log(`[Upload] Extracted vendor from OCR: "${vendorName}"`);
-        mockFieldsForMatching.push({
-          label: 'vendor_name',
-          value: vendorName
-        });
+      if (extractedFields.length > 0) {
+        console.log("[Upload] Fields available for template matching:", 
+          extractedFields.map(f => `${f.label}="${f.value}"`).join(", "));
       }
       
+      // Use the actual extracted fields (with values!) for template matching
       const matchingTemplates = templateService.findMatchingTemplates(
-        mockFieldsForMatching,
+        extractedFields,
         1 // Get top 1 match
       );
 
@@ -200,6 +180,7 @@ function DocumentUploader({ onDocumentProcessed }) {
       if (matchingTemplates.length > 0) {
         const bestTemplate = matchingTemplates[0].template;
         console.log(`[Upload] ✅ Found matching template: "${bestTemplate.name}" (score: ${matchingTemplates[0].score.toFixed(2)})`);
+        console.log(`[Upload] Matched on ${matchingTemplates[0].matchedFields} common fields`);
         console.log(`[Upload] Template has ${bestTemplate.fields.length} fields with bbox hints`);
         
         // Convert template to hints format for backend
@@ -213,10 +194,20 @@ function DocumentUploader({ onDocumentProcessed }) {
             confidence: f.confidence
           }))
         };
-        console.log(`[Upload] Template hints prepared:`, templateHints);
+        console.log(`[Upload] Template hints prepared with ${templateHints.field_hints.length} bbox hints`);
       } else {
-        console.log("[Upload] ❌ No matching templates found (save a good extraction as template first!)");
+        console.log("[Upload] ❌ No matching templates found");
+        console.log("[Upload] 💡 Tip: After confirming this extraction, save it as a template for future use!");
       }
+
+      // Prepare document data with base64
+      const documentData = {
+        ...ocrResponse.data,
+        filename: selectedFile.name,
+        mimeType: selectedFile.type,
+        base64: base64Data,
+        fields: extractedFields, // Start with the priority fields from Step 1
+      };
 
       // STEP 2: Start batch field extraction with template hints
       setBatchProgress({
