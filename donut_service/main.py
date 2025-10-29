@@ -386,7 +386,7 @@ def match_value_to_ocr_bbox(
 
 
 def extract_invoice_fields_layoutlm(
-    image_path: str, custom_fields: list = None, start_field_id: int = 1
+    image_path: str, custom_fields: list = None, start_field_id: int = 1, template_hints: dict = None
 ) -> List[dict]:
     """
     Extract invoice fields using Impira's LayoutLM document Q&A model.
@@ -399,6 +399,8 @@ def extract_invoice_fields_layoutlm(
         custom_fields: Optional list of custom field definitions from user
                       Each field should have: key, question, type, required
         start_field_id: Starting ID for field numbering (for batch processing)
+        template_hints: Optional template hints from few-shot learning system
+                       Contains field_hints with bbox, typical_value, and confidence
 
     Returns:
         List of extracted fields with bboxes and confidence scores
@@ -415,6 +417,18 @@ def extract_invoice_fields_layoutlm(
         logger.info("Running OCR to get word bboxes...")
         ocr_words = perform_ocr_get_words(image_path)
         logger.info(f"OCR found {len(ocr_words)} words")
+
+        # Build template hints lookup for quick access
+        template_hint_map = {}
+        if template_hints and template_hints.get("field_hints"):
+            logger.info(f"Using template hints from: {template_hints.get('template_name', 'unknown')}")
+            for hint in template_hints["field_hints"]:
+                field_key = hint.get("field_key")
+                if field_key:
+                    template_hint_map[field_key] = hint
+                    logger.info(f"  Template hint for {field_key}: bbox={hint.get('bbox')}, confidence={hint.get('confidence', 0):.2f}")
+        else:
+            logger.info("No template hints available for this extraction")
 
         # Define questions for invoice fields
         # Start with default fields, then add/override with custom fields
@@ -549,6 +563,20 @@ def extract_invoice_fields_layoutlm(
                                 confidence, bbox_match.get("confidence", 0.0)
                             )
 
+                            # Apply template hint if available and LayoutLM confidence is low
+                            template_applied = False
+                            if field_label in template_hint_map and final_confidence < 0.7:
+                                hint = template_hint_map[field_label]
+                                hint_bbox = hint.get("bbox")
+                                hint_confidence = hint.get("confidence", 0.0)
+                                
+                                # Use template bbox if hint has higher confidence
+                                if hint_bbox and hint_confidence > final_confidence:
+                                    bbox = hint_bbox
+                                    final_confidence = min(hint_confidence, 0.85)  # Cap template confidence
+                                    template_applied = True
+                                    logger.info(f"  ⭐ Applied template hint for {field_label}: bbox={bbox}, conf={final_confidence:.2f}")
+
                             # For line items, add row index to label
                             label = (
                                 f"{field_label}_row_{idx + 1}"
@@ -563,7 +591,7 @@ def extract_invoice_fields_layoutlm(
                                     "value": answer,
                                     "bbox": bbox,
                                     "confidence": float(final_confidence),
-                                    "source": "layoutlm_qa",
+                                    "source": "layoutlm_qa" + ("_with_template" if template_applied else ""),
                                     "is_line_item": is_line_item,
                                     "row_index": idx + 1 if is_line_item else None,
                                 }
@@ -576,7 +604,7 @@ def extract_invoice_fields_layoutlm(
                                 )
                             else:
                                 logger.info(
-                                    f"✓ {field_label}: {answer} (confidence: {confidence:.2f}, bbox: {bbox})"
+                                    f"✓ {field_label}: {answer} (confidence: {final_confidence:.2f}, bbox: {bbox})"
                                 )
                         else:
                             logger.debug(
@@ -704,7 +732,7 @@ def extract_fields_with_donut(
         # Extract invoice fields using LayoutLM Q&A
         # Pass custom fields if provided and starting field ID
         layoutlm_fields = extract_invoice_fields_layoutlm(
-            image_path, custom_fields, start_field_id
+            image_path, custom_fields, start_field_id, template_hints
         )
         logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
 
