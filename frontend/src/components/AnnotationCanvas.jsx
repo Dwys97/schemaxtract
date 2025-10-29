@@ -321,7 +321,36 @@ function AnnotationCanvas({ documentData }) {
   const fieldItemRefs = useRef({}); // Refs for field items in the left pane
 
   // Extract fields from document data
-  const fields = [...(documentData?.fields || []), ...customFields]; // Merge original and custom fields
+  // Deduplicate fields by field_name/label - keep custom fields over original if duplicates exist
+  const originalFields = documentData?.fields || [];
+  const allFields = [...originalFields, ...customFields];
+
+  // Create map keyed by field name to remove duplicates (custom fields take precedence)
+  const fieldMap = new Map();
+
+  // First add original fields
+  originalFields.forEach((field) => {
+    const key = field.label || field.field_name || field.id;
+    if (!fieldMap.has(key)) {
+      fieldMap.set(key, field);
+    }
+  });
+
+  // Then add custom fields (these override originals with same name)
+  customFields.forEach((field) => {
+    const key = field.label || field.field_name || field.id;
+    fieldMap.set(key, field); // Override if exists
+  });
+
+  const fields = Array.from(fieldMap.values());
+
+  if (allFields.length !== fields.length) {
+    console.log(
+      `[AnnotationCanvas] Deduplicated ${allFields.length} fields to ${
+        fields.length
+      } (removed ${allFields.length - fields.length} duplicates)`
+    );
+  }
   const extractedText = documentData?.extracted_text || "";
   const base64 = documentData?.base64 || "";
   const mimeType = documentData?.mimeType || "application/pdf";
@@ -368,7 +397,9 @@ function AnnotationCanvas({ documentData }) {
       const extractionHeight = documentData?.metadata?.image_size?.height;
 
       if (!extractionWidth || !extractionHeight) {
-        console.warn('[normalizedToPixels] Missing extraction image dimensions, falling back to PDF render dimensions');
+        console.warn(
+          "[normalizedToPixels] Missing extraction image dimensions, falling back to PDF render dimensions"
+        );
         const [x1, y1, x2, y2] = bbox;
         return {
           x: (x1 / 1000) * pageWidth,
@@ -394,7 +425,21 @@ function AnnotationCanvas({ documentData }) {
       const scaledWidth = (extractionX2 - extractionX1) * scaleX;
       const scaledHeight = (extractionY2 - extractionY1) * scaleY;
 
-      console.log(`[normalizedToPixels] bbox [${x1},${y1},${x2},${y2}] -> extraction [${extractionX1.toFixed(1)},${extractionY1.toFixed(1)},${extractionX2.toFixed(1)},${extractionY2.toFixed(1)}] -> scaled [${scaledX.toFixed(1)},${scaledY.toFixed(1)},${scaledWidth.toFixed(1)},${scaledHeight.toFixed(1)}] (extraction ${extractionWidth}x${extractionHeight}, render ${pageWidth.toFixed(1)}x${pageHeight.toFixed(1)})`);
+      console.log(
+        `[normalizedToPixels] bbox [${x1},${y1},${x2},${y2}] -> extraction [${extractionX1.toFixed(
+          1
+        )},${extractionY1.toFixed(1)},${extractionX2.toFixed(
+          1
+        )},${extractionY2.toFixed(1)}] -> scaled [${scaledX.toFixed(
+          1
+        )},${scaledY.toFixed(1)},${scaledWidth.toFixed(
+          1
+        )},${scaledHeight.toFixed(
+          1
+        )}] (extraction ${extractionWidth}x${extractionHeight}, render ${pageWidth.toFixed(
+          1
+        )}x${pageHeight.toFixed(1)})`
+      );
 
       return {
         x: scaledX,
@@ -1645,7 +1690,9 @@ function AnnotationCanvas({ documentData }) {
 
     return (
       <div
-        key={field.id || index}
+        key={
+          field.id || `field-item-${field.field_name || field.label}-${index}`
+        }
         ref={(el) => (fieldItemRefs.current[field.id] = el)}
         className={`field-item ${isSelected ? "selected" : ""} ${
           hasBeenUpdated ? "updated" : ""
@@ -1894,7 +1941,7 @@ function AnnotationCanvas({ documentData }) {
               <div className="page-controls">
                 {/* Removed page navigation - showing all pages */}
                 <span className="page-info">
-                  All Pages ({numPages} {numPages === 1 ? 'page' : 'pages'})
+                  All Pages ({numPages} {numPages === 1 ? "page" : "pages"})
                 </span>
                 {/* Column Suggestion Button */}
                 {customFields.filter((f) => f.bbox).length > 0 && (
@@ -2000,7 +2047,11 @@ function AnnotationCanvas({ documentData }) {
                   >
                     {/* Render all pages vertically */}
                     {Array.from(new Array(numPages), (el, index) => (
-                      <div key={`page_${index + 1}`} className="page-wrapper" style={{ marginBottom: '20px' }}>
+                      <div
+                        key={`page_${index + 1}`}
+                        className="page-wrapper"
+                        style={{ marginBottom: "20px" }}
+                      >
                         <div style={pdfScaleStyle}>
                           <MemoizedPDFPage
                             pageNumber={index + 1}
@@ -2032,89 +2083,367 @@ function AnnotationCanvas({ documentData }) {
                             >
                               <Layer>
                                 {/* Debug: Log all fields and their bboxes */}
-                                {fields.length > 0 && console.log('[AnnotationCanvas] Rendering fields:', fields.map(f => ({ 
-                                  label: f.label, 
-                                  value: f.value,
-                                  bbox: f.bbox, 
-                                  page: f.page,
-                                  hasValidBbox: f.bbox && f.bbox.length === 4
-                                })))}
-                                
+                                {fields.length > 0 &&
+                                  console.log(
+                                    "[AnnotationCanvas] Rendering fields:",
+                                    fields.map((f) => ({
+                                      label: f.label,
+                                      value: f.value,
+                                      bbox: f.bbox,
+                                      page: f.page,
+                                      hasValidBbox:
+                                        f.bbox && f.bbox.length === 4,
+                                    }))
+                                  )}
+
                                 {fields
                                   .filter((field) => {
                                     // Show field if: has bbox AND (no page specified OR matches this page)
                                     const hasPage = field.page !== undefined;
                                     const matchesPage =
-                                      !hasPage || field.page === (index + 1);
-                                    const hasValidBbox = field.bbox && field.bbox.length === 4;
-                                    
+                                      !hasPage || field.page === index + 1;
+                                    const hasValidBbox =
+                                      field.bbox && field.bbox.length === 4;
+
                                     if (!hasValidBbox) {
-                                      console.warn('[AnnotationCanvas] Field missing valid bbox:', field.label, field.bbox);
+                                      console.warn(
+                                        "[AnnotationCanvas] Field missing valid bbox:",
+                                        field.label,
+                                        field.bbox
+                                      );
                                     }
-                                    
+
                                     return hasValidBbox && matchesPage;
                                   })
                                   .map((field, fieldIndex) => {
-                                  // Use updated bbox if available, otherwise original
-                                  const currentBbox =
-                                    updatedFields[field.id]?.bbox || field.bbox;
-                                  const pixels =
-                                    normalizedToPixels(currentBbox);
-                                    
-                                  console.log(`[AnnotationCanvas] Field "${field.label}" (${field.value}):`, {
-                                    bboxRaw: currentBbox,
-                                    bboxValues: currentBbox ? `[${currentBbox[0]}, ${currentBbox[1]}, ${currentBbox[2]}, ${currentBbox[3]}]` : 'null',
-                                    pixels: pixels,
-                                    pixelValues: pixels ? `x:${pixels.x.toFixed(1)}, y:${pixels.y.toFixed(1)}, w:${pixels.width.toFixed(1)}, h:${pixels.height.toFixed(1)}` : 'null',
-                                    pageWidth,
-                                    pageHeight,
-                                    isNormalized: currentBbox && currentBbox.every(c => c <= 1000),
-                                    isOnScreen: pixels && pixels.x >= 0 && pixels.y >= 0 && pixels.x < pageWidth && pixels.y < pageHeight,
-                                    rectWillRender: !!pixels
-                                  });
-                                  
-                                  if (!pixels) {
-                                    console.error(`[AnnotationCanvas] ❌ No pixels for field "${field.label}" - WILL NOT RENDER`);
-                                    return null;
-                                  }
-                                  
-                                  // Log the actual Rect being rendered
-                                  console.log(`[AnnotationCanvas] ✅ Rendering Rect for "${field.label}" at x=${pixels.x.toFixed(1)}, y=${pixels.y.toFixed(1)}, w=${pixels.width.toFixed(1)}, h=${pixels.height.toFixed(1)}`);
+                                    // Use updated bbox if available, otherwise original
+                                    const currentBbox =
+                                      updatedFields[field.id]?.bbox ||
+                                      field.bbox;
+                                    const pixels =
+                                      normalizedToPixels(currentBbox);
 
-                                  const isSelected =
-                                    selectedField?.id === field.id;
+                                    console.log(
+                                      `[AnnotationCanvas] Field "${field.label}" (${field.value}):`,
+                                      {
+                                        bboxRaw: currentBbox,
+                                        bboxValues: currentBbox
+                                          ? `[${currentBbox[0]}, ${currentBbox[1]}, ${currentBbox[2]}, ${currentBbox[3]}]`
+                                          : "null",
+                                        pixels: pixels,
+                                        pixelValues: pixels
+                                          ? `x:${pixels.x.toFixed(
+                                              1
+                                            )}, y:${pixels.y.toFixed(
+                                              1
+                                            )}, w:${pixels.width.toFixed(
+                                              1
+                                            )}, h:${pixels.height.toFixed(1)}`
+                                          : "null",
+                                        pageWidth,
+                                        pageHeight,
+                                        isNormalized:
+                                          currentBbox &&
+                                          currentBbox.every((c) => c <= 1000),
+                                        isOnScreen:
+                                          pixels &&
+                                          pixels.x >= 0 &&
+                                          pixels.y >= 0 &&
+                                          pixels.x < pageWidth &&
+                                          pixels.y < pageHeight,
+                                        rectWillRender: !!pixels,
+                                      }
+                                    );
 
-                                  return (
-                                    <React.Fragment key={field.id || index}>
-                                      <Rect
-                                        ref={(el) => {
-                                          shapeRefs.current[field.id] = el;
-                                          if (el) {
-                                            console.log(`[AnnotationCanvas] Rect ref set for "${field.label}":`, {
-                                              x: el.x(),
-                                              y: el.y(),
-                                              width: el.width(),
-                                              height: el.height(),
-                                              visible: el.visible()
-                                            });
+                                    if (!pixels) {
+                                      console.error(
+                                        `[AnnotationCanvas] ❌ No pixels for field "${field.label}" - WILL NOT RENDER`
+                                      );
+                                      return null;
+                                    }
+
+                                    // Log the actual Rect being rendered
+                                    console.log(
+                                      `[AnnotationCanvas] ✅ Rendering Rect for "${
+                                        field.label
+                                      }" at x=${pixels.x.toFixed(
+                                        1
+                                      )}, y=${pixels.y.toFixed(
+                                        1
+                                      )}, w=${pixels.width.toFixed(
+                                        1
+                                      )}, h=${pixels.height.toFixed(1)}`
+                                    );
+
+                                    const isSelected =
+                                      selectedField?.id === field.id;
+
+                                    return (
+                                      <React.Fragment
+                                        key={
+                                          field.id ||
+                                          `field-${
+                                            field.field_name || field.label
+                                          }-${fieldIndex}`
+                                        }
+                                      >
+                                        <Rect
+                                          ref={(el) => {
+                                            shapeRefs.current[field.id] = el;
+                                            if (el) {
+                                              console.log(
+                                                `[AnnotationCanvas] Rect ref set for "${field.label}":`,
+                                                {
+                                                  x: el.x(),
+                                                  y: el.y(),
+                                                  width: el.width(),
+                                                  height: el.height(),
+                                                  visible: el.visible(),
+                                                }
+                                              );
+                                            }
+                                          }}
+                                          x={pixels.x}
+                                          y={pixels.y}
+                                          width={pixels.width}
+                                          height={pixels.height}
+                                          stroke={
+                                            isSelected ? "#1d72f3" : "#34c759"
                                           }
+                                          strokeWidth={isSelected ? 3 : 2}
+                                          fill={
+                                            isSelected
+                                              ? "rgba(29, 114, 243, 0.15)"
+                                              : "rgba(52, 199, 89, 0.1)"
+                                          }
+                                          cornerRadius={4}
+                                          draggable={true}
+                                          name={`bbox-${field.id}`}
+                                          onDragMove={(e) => {
+                                            // Prevent drag from going outside bounds
+                                            const shape = e.target;
+                                            const x = shape.x();
+                                            const y = shape.y();
+                                            const width = shape.width();
+                                            const height = shape.height();
+
+                                            // Keep bbox within page bounds
+                                            shape.x(
+                                              Math.max(
+                                                0,
+                                                Math.min(pageWidth - width, x)
+                                              )
+                                            );
+                                            shape.y(
+                                              Math.max(
+                                                0,
+                                                Math.min(pageHeight - height, y)
+                                              )
+                                            );
+                                          }}
+                                          onClick={() =>
+                                            handleFieldClick(field)
+                                          }
+                                          onTap={() => handleFieldClick(field)}
+                                          onDragEnd={(e) => {
+                                            // Update bbox position immediately (visual update)
+                                            const newX = e.target.x();
+                                            const newY = e.target.y();
+                                            const width = e.target.width();
+                                            const height = e.target.height();
+
+                                            // Convert back to normalized coordinates
+                                            const normalizedX1 = Math.round(
+                                              (newX / pageWidth) * 1000
+                                            );
+                                            const normalizedY1 = Math.round(
+                                              (newY / pageHeight) * 1000
+                                            );
+                                            const normalizedX2 = Math.round(
+                                              ((newX + width) / pageWidth) *
+                                                1000
+                                            );
+                                            const normalizedY2 = Math.round(
+                                              ((newY + height) / pageHeight) *
+                                                1000
+                                            );
+
+                                            const newBbox = [
+                                              normalizedX1,
+                                              normalizedY1,
+                                              normalizedX2,
+                                              normalizedY2,
+                                            ];
+
+                                            // Update the bbox immediately in updatedFields
+                                            setUpdatedFields((prev) => ({
+                                              ...prev,
+                                              [field.id]: {
+                                                ...(prev[field.id] || field),
+                                                bbox: newBbox,
+                                              },
+                                            }));
+
+                                            console.log(
+                                              `Bbox moved for ${field.label}:`,
+                                              newBbox
+                                            );
+
+                                            // Get original bbox
+                                            const currentBbox = field.bbox;
+
+                                            // Show prompt to ask if user wants to re-extract
+                                            setPendingReextraction({
+                                              field,
+                                              bbox: newBbox,
+                                              originalBbox: currentBbox,
+                                              action: "moved",
+                                            });
+                                          }}
+                                          onTransformEnd={(e) => {
+                                            // Update bbox size immediately (visual update)
+                                            const node = e.target;
+                                            const scaleX = node.scaleX();
+                                            const scaleY = node.scaleY();
+
+                                            // Reset scale
+                                            node.scaleX(1);
+                                            node.scaleY(1);
+
+                                            const newWidth =
+                                              node.width() * scaleX;
+                                            const newHeight =
+                                              node.height() * scaleY;
+
+                                            // Update the node dimensions
+                                            node.width(newWidth);
+                                            node.height(newHeight);
+
+                                            const normalizedX1 = Math.round(
+                                              (node.x() / pageWidth) * 1000
+                                            );
+                                            const normalizedY1 = Math.round(
+                                              (node.y() / pageHeight) * 1000
+                                            );
+                                            const normalizedX2 = Math.round(
+                                              ((node.x() + newWidth) /
+                                                pageWidth) *
+                                                1000
+                                            );
+                                            const normalizedY2 = Math.round(
+                                              ((node.y() + newHeight) /
+                                                pageHeight) *
+                                                1000
+                                            );
+
+                                            const newBbox = [
+                                              normalizedX1,
+                                              normalizedY1,
+                                              normalizedX2,
+                                              normalizedY2,
+                                            ];
+
+                                            // Update the bbox immediately in updatedFields
+                                            setUpdatedFields((prev) => ({
+                                              ...prev,
+                                              [field.id]: {
+                                                ...(prev[field.id] || field),
+                                                bbox: newBbox,
+                                              },
+                                            }));
+
+                                            console.log(
+                                              `Bbox resized for ${field.label}:`,
+                                              newBbox
+                                            );
+
+                                            // Get original bbox
+                                            const currentBbox = field.bbox;
+
+                                            // Show prompt to ask if user wants to re-extract
+                                            setPendingReextraction({
+                                              field,
+                                              bbox: newBbox,
+                                              originalBbox: currentBbox,
+                                              action: "resized",
+                                            });
+                                          }}
+                                          onMouseEnter={(e) => {
+                                            const container = e.target
+                                              .getStage()
+                                              .container();
+                                            container.style.cursor = "move";
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            const container = e.target
+                                              .getStage()
+                                              .container();
+                                            container.style.cursor = "default";
+                                          }}
+                                        />
+                                        {isSelected && (
+                                          <KonvaText
+                                            x={pixels.x}
+                                            y={pixels.y - 20}
+                                            text={field.field_name}
+                                            fontSize={12}
+                                            fontFamily="Inter"
+                                            fill="#1d72f3"
+                                            padding={4}
+                                            background="#ffffff"
+                                          />
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })}
+
+                                {/* Render OCR-detected text bboxes (selectable, draggable, resizable) */}
+                                {selectionMode &&
+                                  ocrBboxes.map((ocrBbox) => {
+                                    const pixels = normalizedToPixels(
+                                      ocrBbox.bbox
+                                    );
+                                    if (!pixels) return null;
+
+                                    const isMultiSelected =
+                                      selectedOcrBboxes.includes(ocrBbox.id);
+                                    const isTransformSelected =
+                                      selectedOcrBbox?.id === ocrBbox.id;
+
+                                    return (
+                                      <Rect
+                                        key={ocrBbox.id}
+                                        ref={(el) => {
+                                          ocrShapeRefs.current[ocrBbox.id] = el;
                                         }}
                                         x={pixels.x}
                                         y={pixels.y}
                                         width={pixels.width}
                                         height={pixels.height}
                                         stroke={
-                                          isSelected ? "#1d72f3" : "#34c759"
+                                          isMultiSelected
+                                            ? "#34c759"
+                                            : "#ff9800"
                                         }
-                                        strokeWidth={isSelected ? 3 : 2}
+                                        strokeWidth={isMultiSelected ? 3 : 1.5}
                                         fill={
-                                          isSelected
-                                            ? "rgba(29, 114, 243, 0.15)"
-                                            : "rgba(52, 199, 89, 0.1)"
+                                          isMultiSelected
+                                            ? "rgba(52, 199, 89, 0.25)"
+                                            : "rgba(255, 152, 0, 0.1)"
                                         }
-                                        cornerRadius={4}
+                                        cornerRadius={2}
                                         draggable={true}
-                                        name={`bbox-${field.id}`}
+                                        name={`ocr-bbox-${ocrBbox.id}`}
+                                        onClick={() =>
+                                          handleOcrBboxClick(ocrBbox)
+                                        }
+                                        onTap={() =>
+                                          handleOcrBboxClick(ocrBbox)
+                                        }
+                                        onDragStart={() => {
+                                          // Set as selected for transformation
+                                          setSelectedOcrBbox(ocrBbox);
+                                        }}
                                         onDragMove={(e) => {
                                           // Prevent drag from going outside bounds
                                           const shape = e.target;
@@ -2137,10 +2466,8 @@ function AnnotationCanvas({ documentData }) {
                                             )
                                           );
                                         }}
-                                        onClick={() => handleFieldClick(field)}
-                                        onTap={() => handleFieldClick(field)}
                                         onDragEnd={(e) => {
-                                          // Update bbox position immediately (visual update)
+                                          // Update bbox position
                                           const newX = e.target.x();
                                           const newY = e.target.y();
                                           const width = e.target.width();
@@ -2168,33 +2495,22 @@ function AnnotationCanvas({ documentData }) {
                                             normalizedY2,
                                           ];
 
-                                          // Update the bbox immediately in updatedFields
-                                          setUpdatedFields((prev) => ({
-                                            ...prev,
-                                            [field.id]: {
-                                              ...(prev[field.id] || field),
-                                              bbox: newBbox,
-                                            },
-                                          }));
-
-                                          console.log(
-                                            `Bbox moved for ${field.label}:`,
-                                            newBbox
+                                          // Update the OCR bbox in the list
+                                          setOcrBboxes((prev) =>
+                                            prev.map((b) =>
+                                              b.id === ocrBbox.id
+                                                ? { ...b, bbox: newBbox }
+                                                : b
+                                            )
                                           );
 
-                                          // Get original bbox
-                                          const currentBbox = field.bbox;
-
-                                          // Show prompt to ask if user wants to re-extract
-                                          setPendingReextraction({
-                                            field,
-                                            bbox: newBbox,
-                                            originalBbox: currentBbox,
-                                            action: "moved",
-                                          });
+                                          console.log(
+                                            `OCR bbox moved: ${ocrBbox.id}`,
+                                            newBbox
+                                          );
                                         }}
                                         onTransformEnd={(e) => {
-                                          // Update bbox size immediately (visual update)
+                                          // Update bbox size after resize
                                           const node = e.target;
                                           const scaleX = node.scaleX();
                                           const scaleY = node.scaleY();
@@ -2236,30 +2552,50 @@ function AnnotationCanvas({ documentData }) {
                                             normalizedY2,
                                           ];
 
-                                          // Update the bbox immediately in updatedFields
-                                          setUpdatedFields((prev) => ({
-                                            ...prev,
-                                            [field.id]: {
-                                              ...(prev[field.id] || field),
-                                              bbox: newBbox,
-                                            },
-                                          }));
-
-                                          console.log(
-                                            `Bbox resized for ${field.label}:`,
-                                            newBbox
+                                          // Update the OCR bbox in the list
+                                          setOcrBboxes((prev) =>
+                                            prev.map((b) =>
+                                              b.id === ocrBbox.id
+                                                ? { ...b, bbox: newBbox }
+                                                : b
+                                            )
                                           );
 
-                                          // Get original bbox
-                                          const currentBbox = field.bbox;
-
-                                          // Show prompt to ask if user wants to re-extract
-                                          setPendingReextraction({
-                                            field,
-                                            bbox: newBbox,
-                                            originalBbox: currentBbox,
-                                            action: "resized",
-                                          });
+                                          console.log(
+                                            `OCR bbox resized: ${ocrBbox.id}`,
+                                            newBbox
+                                          );
+                                        }}
+                                        onContextMenu={(e) => {
+                                          e.evt.preventDefault();
+                                          const shouldDelete = window.confirm(
+                                            `Remove this ${
+                                              ocrBbox.manual ? "manual" : "OCR"
+                                            } bbox?\n\nText: "${ocrBbox.text}"`
+                                          );
+                                          if (shouldDelete) {
+                                            // Remove from OCR bboxes list
+                                            setOcrBboxes((prev) =>
+                                              prev.filter(
+                                                (b) => b.id !== ocrBbox.id
+                                              )
+                                            );
+                                            // Remove from selection if selected
+                                            setSelectedOcrBboxes((prev) =>
+                                              prev.filter(
+                                                (id) => id !== ocrBbox.id
+                                              )
+                                            );
+                                            // Clear transform selection
+                                            if (
+                                              selectedOcrBbox?.id === ocrBbox.id
+                                            ) {
+                                              setSelectedOcrBbox(null);
+                                            }
+                                            console.log(
+                                              `Removed bbox: ${ocrBbox.id}`
+                                            );
+                                          }
                                         }}
                                         onMouseEnter={(e) => {
                                           const container = e.target
@@ -2274,383 +2610,164 @@ function AnnotationCanvas({ documentData }) {
                                           container.style.cursor = "default";
                                         }}
                                       />
-                                      {isSelected && (
-                                        <KonvaText
-                                          x={pixels.x}
-                                          y={pixels.y - 20}
-                                          text={field.field_name}
-                                          fontSize={12}
-                                          fontFamily="Inter"
-                                          fill="#1d72f3"
-                                          padding={4}
-                                          background="#ffffff"
-                                        />
-                                      )}
-                                    </React.Fragment>
-                                  );
-                                })}
+                                    );
+                                  })}
 
-                              {/* Render OCR-detected text bboxes (selectable, draggable, resizable) */}
-                              {selectionMode &&
-                                ocrBboxes.map((ocrBbox) => {
-                                  const pixels = normalizedToPixels(
-                                    ocrBbox.bbox
-                                  );
-                                  if (!pixels) return null;
+                                {/* Render bbox being drawn */}
+                                {newBbox && (
+                                  <Rect
+                                    x={
+                                      newBbox.width < 0
+                                        ? newBbox.x + newBbox.width
+                                        : newBbox.x
+                                    }
+                                    y={
+                                      newBbox.height < 0
+                                        ? newBbox.y + newBbox.height
+                                        : newBbox.y
+                                    }
+                                    width={Math.abs(newBbox.width)}
+                                    height={Math.abs(newBbox.height)}
+                                    stroke="#ff9800"
+                                    strokeWidth={3}
+                                    fill="rgba(255, 152, 0, 0.2)"
+                                    dash={[10, 5]}
+                                    listening={false}
+                                  />
+                                )}
 
-                                  const isMultiSelected =
-                                    selectedOcrBboxes.includes(ocrBbox.id);
-                                  const isTransformSelected =
-                                    selectedOcrBbox?.id === ocrBbox.id;
+                                {/* Render selection rectangle for multi-select */}
+                                {selectionRect && (
+                                  <Rect
+                                    x={
+                                      selectionRect.width < 0
+                                        ? selectionRect.x + selectionRect.width
+                                        : selectionRect.x
+                                    }
+                                    y={
+                                      selectionRect.height < 0
+                                        ? selectionRect.y + selectionRect.height
+                                        : selectionRect.y
+                                    }
+                                    width={Math.abs(selectionRect.width)}
+                                    height={Math.abs(selectionRect.height)}
+                                    stroke="#1d72f3"
+                                    strokeWidth={2}
+                                    fill="rgba(29, 114, 243, 0.1)"
+                                    dash={[5, 5]}
+                                    listening={false}
+                                  />
+                                )}
 
-                                  return (
-                                    <Rect
-                                      key={ocrBbox.id}
-                                      ref={(el) => {
-                                        ocrShapeRefs.current[ocrBbox.id] = el;
-                                      }}
-                                      x={pixels.x}
-                                      y={pixels.y}
-                                      width={pixels.width}
-                                      height={pixels.height}
-                                      stroke={
-                                        isMultiSelected ? "#34c759" : "#ff9800"
-                                      }
-                                      strokeWidth={isMultiSelected ? 3 : 1.5}
-                                      fill={
-                                        isMultiSelected
-                                          ? "rgba(52, 199, 89, 0.25)"
-                                          : "rgba(255, 152, 0, 0.1)"
-                                      }
-                                      cornerRadius={2}
-                                      draggable={true}
-                                      name={`ocr-bbox-${ocrBbox.id}`}
-                                      onClick={() =>
-                                        handleOcrBboxClick(ocrBbox)
-                                      }
-                                      onTap={() => handleOcrBboxClick(ocrBbox)}
-                                      onDragStart={() => {
-                                        // Set as selected for transformation
-                                        setSelectedOcrBbox(ocrBbox);
-                                      }}
-                                      onDragMove={(e) => {
-                                        // Prevent drag from going outside bounds
-                                        const shape = e.target;
-                                        const x = shape.x();
-                                        const y = shape.y();
-                                        const width = shape.width();
-                                        const height = shape.height();
-
-                                        // Keep bbox within page bounds
-                                        shape.x(
-                                          Math.max(
-                                            0,
-                                            Math.min(pageWidth - width, x)
-                                          )
-                                        );
-                                        shape.y(
-                                          Math.max(
-                                            0,
-                                            Math.min(pageHeight - height, y)
-                                          )
-                                        );
-                                      }}
-                                      onDragEnd={(e) => {
-                                        // Update bbox position
-                                        const newX = e.target.x();
-                                        const newY = e.target.y();
-                                        const width = e.target.width();
-                                        const height = e.target.height();
-
-                                        // Convert back to normalized coordinates
-                                        const normalizedX1 = Math.round(
-                                          (newX / pageWidth) * 1000
-                                        );
-                                        const normalizedY1 = Math.round(
-                                          (newY / pageHeight) * 1000
-                                        );
-                                        const normalizedX2 = Math.round(
-                                          ((newX + width) / pageWidth) * 1000
-                                        );
-                                        const normalizedY2 = Math.round(
-                                          ((newY + height) / pageHeight) * 1000
-                                        );
-
-                                        const newBbox = [
-                                          normalizedX1,
-                                          normalizedY1,
-                                          normalizedX2,
-                                          normalizedY2,
-                                        ];
-
-                                        // Update the OCR bbox in the list
-                                        setOcrBboxes((prev) =>
-                                          prev.map((b) =>
-                                            b.id === ocrBbox.id
-                                              ? { ...b, bbox: newBbox }
-                                              : b
-                                          )
-                                        );
-
-                                        console.log(
-                                          `OCR bbox moved: ${ocrBbox.id}`,
-                                          newBbox
-                                        );
-                                      }}
-                                      onTransformEnd={(e) => {
-                                        // Update bbox size after resize
-                                        const node = e.target;
-                                        const scaleX = node.scaleX();
-                                        const scaleY = node.scaleY();
-
-                                        // Reset scale
-                                        node.scaleX(1);
-                                        node.scaleY(1);
-
-                                        const newWidth = node.width() * scaleX;
-                                        const newHeight =
-                                          node.height() * scaleY;
-
-                                        // Update the node dimensions
-                                        node.width(newWidth);
-                                        node.height(newHeight);
-
-                                        const normalizedX1 = Math.round(
-                                          (node.x() / pageWidth) * 1000
-                                        );
-                                        const normalizedY1 = Math.round(
-                                          (node.y() / pageHeight) * 1000
-                                        );
-                                        const normalizedX2 = Math.round(
-                                          ((node.x() + newWidth) / pageWidth) *
-                                            1000
-                                        );
-                                        const normalizedY2 = Math.round(
-                                          ((node.y() + newHeight) /
-                                            pageHeight) *
-                                            1000
-                                        );
-
-                                        const newBbox = [
-                                          normalizedX1,
-                                          normalizedY1,
-                                          normalizedX2,
-                                          normalizedY2,
-                                        ];
-
-                                        // Update the OCR bbox in the list
-                                        setOcrBboxes((prev) =>
-                                          prev.map((b) =>
-                                            b.id === ocrBbox.id
-                                              ? { ...b, bbox: newBbox }
-                                              : b
-                                          )
-                                        );
-
-                                        console.log(
-                                          `OCR bbox resized: ${ocrBbox.id}`,
-                                          newBbox
-                                        );
-                                      }}
-                                      onContextMenu={(e) => {
-                                        e.evt.preventDefault();
-                                        const shouldDelete = window.confirm(
-                                          `Remove this ${
-                                            ocrBbox.manual ? "manual" : "OCR"
-                                          } bbox?\n\nText: "${ocrBbox.text}"`
-                                        );
-                                        if (shouldDelete) {
-                                          // Remove from OCR bboxes list
-                                          setOcrBboxes((prev) =>
-                                            prev.filter(
-                                              (b) => b.id !== ocrBbox.id
-                                            )
-                                          );
-                                          // Remove from selection if selected
-                                          setSelectedOcrBboxes((prev) =>
-                                            prev.filter(
-                                              (id) => id !== ocrBbox.id
-                                            )
-                                          );
-                                          // Clear transform selection
-                                          if (
-                                            selectedOcrBbox?.id === ocrBbox.id
-                                          ) {
-                                            setSelectedOcrBbox(null);
-                                          }
-                                          console.log(
-                                            `Removed bbox: ${ocrBbox.id}`
-                                          );
-                                        }
-                                      }}
-                                      onMouseEnter={(e) => {
-                                        const container = e.target
-                                          .getStage()
-                                          .container();
-                                        container.style.cursor = "move";
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        const container = e.target
-                                          .getStage()
-                                          .container();
-                                        container.style.cursor = "default";
-                                      }}
-                                    />
-                                  );
-                                })}
-
-                              {/* Render bbox being drawn */}
-                              {newBbox && (
-                                <Rect
-                                  x={
-                                    newBbox.width < 0
-                                      ? newBbox.x + newBbox.width
-                                      : newBbox.x
-                                  }
-                                  y={
-                                    newBbox.height < 0
-                                      ? newBbox.y + newBbox.height
-                                      : newBbox.y
-                                  }
-                                  width={Math.abs(newBbox.width)}
-                                  height={Math.abs(newBbox.height)}
-                                  stroke="#ff9800"
-                                  strokeWidth={3}
-                                  fill="rgba(255, 152, 0, 0.2)"
-                                  dash={[10, 5]}
-                                  listening={false}
+                                {/* Transformer for resize handles - only show when field is selected */}
+                                <Transformer
+                                  ref={transformerRef}
+                                  borderStroke="#1d72f3"
+                                  borderStrokeWidth={2}
+                                  anchorSize={12}
+                                  anchorStroke="#1d72f3"
+                                  anchorFill="#ffffff"
+                                  anchorStrokeWidth={2}
+                                  anchorCornerRadius={2}
+                                  enabledAnchors={[
+                                    "top-left",
+                                    "top-right",
+                                    "bottom-left",
+                                    "bottom-right",
+                                    "middle-left",
+                                    "middle-right",
+                                    "top-center",
+                                    "bottom-center",
+                                  ]}
+                                  boundBoxFunc={(oldBox, newBox) => {
+                                    // Limit resize to stay within page bounds and minimum size
+                                    if (
+                                      newBox.width < 20 ||
+                                      newBox.height < 10
+                                    ) {
+                                      return oldBox;
+                                    }
+                                    if (
+                                      newBox.x < 0 ||
+                                      newBox.y < 0 ||
+                                      newBox.x + newBox.width > pageWidth ||
+                                      newBox.y + newBox.height > pageHeight
+                                    ) {
+                                      return oldBox;
+                                    }
+                                    return newBox;
+                                  }}
+                                  rotateEnabled={false}
+                                  keepRatio={false}
                                 />
-                              )}
+                              </Layer>
+                            </Stage>
+                          </div>
+                        )}
 
-                              {/* Render selection rectangle for multi-select */}
-                              {selectionRect && (
-                                <Rect
-                                  x={
-                                    selectionRect.width < 0
-                                      ? selectionRect.x + selectionRect.width
-                                      : selectionRect.x
-                                  }
-                                  y={
-                                    selectionRect.height < 0
-                                      ? selectionRect.y + selectionRect.height
-                                      : selectionRect.y
-                                  }
-                                  width={Math.abs(selectionRect.width)}
-                                  height={Math.abs(selectionRect.height)}
-                                  stroke="#1d72f3"
-                                  strokeWidth={2}
-                                  fill="rgba(29, 114, 243, 0.1)"
-                                  dash={[5, 5]}
-                                  listening={false}
-                                />
-                              )}
-
-                              {/* Transformer for resize handles - only show when field is selected */}
-                              <Transformer
-                                ref={transformerRef}
-                                borderStroke="#1d72f3"
-                                borderStrokeWidth={2}
-                                anchorSize={12}
-                                anchorStroke="#1d72f3"
-                                anchorFill="#ffffff"
-                                anchorStrokeWidth={2}
-                                anchorCornerRadius={2}
-                                enabledAnchors={[
-                                  "top-left",
-                                  "top-right",
-                                  "bottom-left",
-                                  "bottom-right",
-                                  "middle-left",
-                                  "middle-right",
-                                  "top-center",
-                                  "bottom-center",
-                                ]}
-                                boundBoxFunc={(oldBox, newBox) => {
-                                  // Limit resize to stay within page bounds and minimum size
-                                  if (newBox.width < 20 || newBox.height < 10) {
-                                    return oldBox;
-                                  }
-                                  if (
-                                    newBox.x < 0 ||
-                                    newBox.y < 0 ||
-                                    newBox.x + newBox.width > pageWidth ||
-                                    newBox.y + newBox.height > pageHeight
-                                  ) {
-                                    return oldBox;
-                                  }
-                                  return newBox;
-                                }}
-                                rotateEnabled={false}
-                                keepRatio={false}
-                              />
-                            </Layer>
-                          </Stage>
-                        </div>
-                      )}
-
-                      {/* Confirmation Popup - positioned next to bbox */}
-                      {pendingReextraction && (
-                        <div
-                          className="bbox-popup"
-                          style={{
-                            position: "absolute",
-                            left: (() => {
-                              const pixels = normalizedToPixels(
-                                pendingReextraction.bbox
-                              );
-                              if (!pixels) return "50%";
-                              const popupX =
-                                (pixels.x + pixels.width) * zoom + 1;
-                              return `${popupX}px`;
-                            })(),
-                            top: (() => {
-                              const pixels = normalizedToPixels(
-                                pendingReextraction.bbox
-                              );
-                              if (!pixels) return "50%";
-                              const popupY = pixels.y * zoom;
-                              return `${popupY}px`;
-                            })(),
-                            zIndex: 1000,
-                          }}
-                        >
-                          <div className="bbox-popup-content">
-                            <p className="bbox-popup-message">
-                              Re-extract text?
-                            </p>
-                            <div className="bbox-popup-actions">
-                              <button
-                                className="btn-popup btn-accept"
-                                onClick={handleConfirmReextraction}
-                              >
-                                ✓
-                              </button>
-                              <button
-                                className="btn-popup btn-cancel"
-                                onClick={handleCancelReextraction}
-                              >
-                                ✗
-                              </button>
+                        {/* Confirmation Popup - positioned next to bbox */}
+                        {pendingReextraction && (
+                          <div
+                            className="bbox-popup"
+                            style={{
+                              position: "absolute",
+                              left: (() => {
+                                const pixels = normalizedToPixels(
+                                  pendingReextraction.bbox
+                                );
+                                if (!pixels) return "50%";
+                                const popupX =
+                                  (pixels.x + pixels.width) * zoom + 1;
+                                return `${popupX}px`;
+                              })(),
+                              top: (() => {
+                                const pixels = normalizedToPixels(
+                                  pendingReextraction.bbox
+                                );
+                                if (!pixels) return "50%";
+                                const popupY = pixels.y * zoom;
+                                return `${popupY}px`;
+                              })(),
+                              zIndex: 1000,
+                            }}
+                          >
+                            <div className="bbox-popup-content">
+                              <p className="bbox-popup-message">
+                                Re-extract text?
+                              </p>
+                              <div className="bbox-popup-actions">
+                                <button
+                                  className="btn-popup btn-accept"
+                                  onClick={handleConfirmReextraction}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  className="btn-popup btn-cancel"
+                                  onClick={handleCancelReextraction}
+                                >
+                                  ✗
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {/* New Field Popup - for custom bbox creation */}
-                      {pendingNewField && (
-                        <NewFieldPopup
-                          bbox={pendingNewField.bbox}
-                          pixelBbox={pendingNewField.pixelBbox}
-                          zoom={zoom}
-                          normalizedToPixels={normalizedToPixels}
-                          onConfirm={handleConfirmNewField}
-                          onCancel={handleCancelNewField}
-                          existingFields={fields}
-                          batchMode={batchMode}
-                          batchFieldName={batchFieldName}
-                        />
-                      )}
-                    </div>
+                        {/* New Field Popup - for custom bbox creation */}
+                        {pendingNewField && (
+                          <NewFieldPopup
+                            bbox={pendingNewField.bbox}
+                            pixelBbox={pendingNewField.pixelBbox}
+                            zoom={zoom}
+                            normalizedToPixels={normalizedToPixels}
+                            onConfirm={handleConfirmNewField}
+                            onCancel={handleCancelNewField}
+                            existingFields={fields}
+                            batchMode={batchMode}
+                            batchFieldName={batchFieldName}
+                          />
+                        )}
+                      </div>
                     ))}
                   </Document>
                 )}

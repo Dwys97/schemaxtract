@@ -576,6 +576,510 @@ def match_value_to_ocr_bbox_improved(
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
+def extract_table_rows_intelligent(
+    image_path: str,
+    line_item_fields: list,
+    ocr_words: list,
+    img_width: int,
+    img_height: int,
+    max_rows: int = 50,
+) -> list:
+    """
+    Intelligently extract table rows using OCR-based table detection.
+
+    This function:
+    1. Detects table structure using OCR with PSM 6 (uniform block text mode)
+    2. Identifies column headers based on field names
+    3. Groups text into columns by X position
+    4. Extracts rows by Y position clustering
+    5. Returns structured row data with proper field associations
+
+    Args:
+        image_path: Path to the invoice image
+        line_item_fields: List of field definitions for line items (field_key, question, category)
+        ocr_words: Pre-extracted OCR words with bboxes
+        img_width: Image width in pixels
+        img_height: Image height in pixels
+        max_rows: Maximum number of rows to extract (default 10)
+
+    Returns:
+        List of extracted row data with fields properly grouped by row
+    """
+    try:
+        logger.info(
+            f"[TABLE DETECTION] Starting intelligent table extraction for {len(line_item_fields)} line item fields..."
+        )
+
+        # Load image
+        image = Image.open(image_path).convert("RGB")
+
+        # IMPROVED: Use same high-quality OCR as text selection
+        # Apply contrast enhancement for better text detection
+        image_gray = image.convert("L")
+        from PIL import ImageEnhance
+
+        enhancer = ImageEnhance.Contrast(image_gray)
+        image_enhanced = enhancer.enhance(1.3)
+
+        # Run OCR with PSM 3 (automatic page segmentation) + OEM 1 (LSTM neural net)
+        # This is much more accurate than PSM 6 for complex table layouts
+        logger.info(
+            "[TABLE DETECTION] Running high-quality OCR (PSM 3 + OEM 1) for table structure..."
+        )
+        ocr_result = pytesseract.image_to_data(
+            image_enhanced,
+            output_type=pytesseract.Output.DICT,
+            config="--psm 3 --oem 1",
+        )
+
+        # Build enhanced text blocks with better filtering
+        text_blocks = []
+        for i in range(len(ocr_result["text"])):
+            text = ocr_result["text"][i].strip()
+            conf = int(ocr_result["conf"][i])
+
+            if text and conf > 20:  # Lower threshold for better table detection
+                x, y = ocr_result["left"][i], ocr_result["top"][i]
+                w, h = ocr_result["width"][i], ocr_result["height"][i]
+
+                # Normalized bbox [0-1000]
+                norm_bbox = [
+                    int((x / img_width) * 1000),
+                    int((y / img_height) * 1000),
+                    int(((x + w) / img_width) * 1000),
+                    int(((y + h) / img_height) * 1000),
+                ]
+
+                text_blocks.append(
+                    {
+                        "text": text,
+                        "bbox": norm_bbox,
+                        "pixel_bbox": [x, y, x + w, y + h],
+                        "conf": conf,
+                        "center_x": int((x + w / 2) / img_width * 1000),
+                        "center_y": int((y + h / 2) / img_height * 1000),
+                    }
+                )
+
+        logger.info(f"[TABLE DETECTION] OCR found {len(text_blocks)} text blocks")
+
+        if len(text_blocks) < 5:
+            logger.warning(
+                "[TABLE DETECTION] Not enough text blocks for table detection"
+            )
+            return []
+
+        # Step 1: Find potential table headers by matching field names
+        from difflib import SequenceMatcher
+
+        def fuzzy_match_score(a, b):
+            """Calculate similarity between two strings (0-1)"""
+            return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+        # Build field name variants for matching
+        field_headers = {}
+        for field in line_item_fields:
+            field_key = field.get("key") or field.get("field_key")
+            question = field.get("question", "")
+
+            # Extract likely column header from question
+            # "What is the product description?" -> "product description"
+            header_text = (
+                question.lower().replace("what is the ", "").replace("?", "").strip()
+            )
+
+            # Build comprehensive variants based on common table header patterns
+            variants = [
+                header_text,
+                field_key.replace("item_", "").replace("_", " "),
+                field_key.replace("item_", "").replace("_", ""),
+            ]
+
+            # Add specific common table header aliases
+            if "hs_code" in field_key or "product_code" in field_key:
+                variants.extend(
+                    [
+                        "comm. code",
+                        "comm code",
+                        "commodity code",
+                        "hs code",
+                        "tariff code",
+                    ]
+                )
+            elif "country_of_origin" in field_key or "origin" in field_key:
+                variants.extend(["origin ctry", "origin", "country", "ctry", "coo"])
+            elif "description" in field_key:
+                variants.extend(["description", "desc", "item description", "product"])
+            elif "quantity" in field_key or "qty" in field_key:
+                variants.extend(["qnty", "qty", "quantity", "quan"])
+            elif "unit" in field_key and "price" not in field_key:
+                variants.extend(["unit", "uom", "u/m"])
+            elif "net_weight" in field_key:
+                variants.extend(["net wt", "net weight", "net wt kg"])
+            elif "gross_weight" in field_key:
+                variants.extend(["gross wt", "gross weight", "gross wt kg"])
+            elif "unit_price" in field_key:
+                variants.extend(["price /unit", "unit price", "price/unit"])
+            elif "total_price" in field_key or "net_price" in field_key:
+                variants.extend(["net price", "total price", "amount"])
+
+            field_headers[field_key] = {
+                "variants": variants,
+                "question": question,
+            }
+
+        logger.info(
+            f"[TABLE DETECTION] Looking for headers matching: {list(field_headers.keys())}"
+        )
+
+        # IMPROVED: Find table header row by clustering
+        # Table headers typically form a horizontal line with multiple short words
+        # Group blocks by Y position to find header row
+        y_tolerance = 20
+        y_groups = {}
+
+        # Only consider top 50% of document for headers
+        header_search_max_y = 500
+        for block in text_blocks:
+            if block["center_y"] > header_search_max_y:
+                continue
+
+            # Find or create Y group
+            found_group = False
+            for group_y in list(y_groups.keys()):
+                if abs(block["center_y"] - group_y) < y_tolerance:
+                    y_groups[group_y].append(block)
+                    found_group = True
+                    break
+
+            if not found_group:
+                y_groups[block["center_y"]] = [block]
+
+        # Find the Y position with the most blocks (likely header row)
+        # Also filter to rows with at least 3 blocks (table headers have multiple columns)
+        header_row_y = None
+        max_blocks_in_row = 0
+
+        for group_y, blocks in y_groups.items():
+            # Table headers should have:
+            # 1. Multiple blocks (at least 3 columns)
+            # 2. Short words (headers are concise)
+            # 3. Not too high up (skip logo/company name area - first 10%)
+            if len(blocks) >= 3 and group_y > 100:  # Skip top 10%
+                avg_word_length = sum(len(b["text"]) for b in blocks) / len(blocks)
+                # Headers are typically short (5-15 characters)
+                if 3 <= avg_word_length <= 20:
+                    if len(blocks) > max_blocks_in_row:
+                        max_blocks_in_row = len(blocks)
+                        header_row_y = group_y
+
+        if header_row_y:
+            logger.info(
+                f"[TABLE DETECTION] Detected header row at Y={header_row_y} with {max_blocks_in_row} blocks"
+            )
+            potential_header_blocks = y_groups[header_row_y]
+        else:
+            # Fallback: look in 15-40% range for any blocks
+            logger.warning(
+                "[TABLE DETECTION] Could not auto-detect header row, using fallback"
+            )
+            potential_header_blocks = [
+                b for b in text_blocks if 150 < b["center_y"] < 400
+            ]
+
+        logger.info(
+            f"[TABLE DETECTION] Found {len(potential_header_blocks)} potential header blocks"
+        )
+        logger.info(
+            f"[TABLE DETECTION] Sample headers: {[b['text'] for b in potential_header_blocks[:10]]}"
+        )
+
+        # Match headers to field names with stricter scoring
+        detected_headers = {}
+        for block in potential_header_blocks:
+            best_match = None
+            best_score = 0.5  # Increased minimum threshold from 0.4 to 0.5
+
+            for field_key, header_info in field_headers.items():
+                for variant in header_info["variants"]:
+                    score = fuzzy_match_score(block["text"], variant)
+                    if score > best_score:
+                        best_score = score
+                        best_match = field_key
+
+            if best_match:
+                # Avoid duplicate matches - only keep best match for each field
+                if best_match in [h["field_key"] for h in detected_headers.values()]:
+                    # Check if this is a better match than existing
+                    existing = [
+                        h
+                        for h in detected_headers.values()
+                        if h.get("field_key") == best_match
+                    ][0]
+                    if best_score > existing.get("match_score", 0):
+                        # Remove old match
+                        old_key = [
+                            k
+                            for k, v in detected_headers.items()
+                            if v.get("field_key") == best_match
+                        ][0]
+                        del detected_headers[old_key]
+                    else:
+                        continue  # Keep existing better match
+
+                detected_headers[best_match] = {
+                    "field_key": best_match,
+                    "text": block["text"],
+                    "bbox": block["bbox"],
+                    "center_x": block["center_x"],
+                    "center_y": block["center_y"],
+                    "confidence": block["conf"] / 100.0,
+                    "match_score": best_score,
+                }
+                logger.info(
+                    f"[TABLE DETECTION] Matched header '{block['text']}' to field '{best_match}' (score: {best_score:.2f})"
+                )
+
+        # Step 2: Group text blocks into columns by X position
+        # Find the minimum Y for data rows (below headers)
+        if detected_headers:
+            min_data_y = (
+                max(h["center_y"] for h in detected_headers.values()) + 30
+            )  # 3% below headers
+        else:
+            min_data_y = 200  # Default to 20% from top
+
+        logger.info(f"[TABLE DETECTION] Data rows start at Y={min_data_y}")
+
+        # Group blocks into columns
+        columns = {}
+        x_tolerance = 60  # 6% tolerance for same column
+
+        data_blocks = [b for b in text_blocks if b["center_y"] >= min_data_y]
+        logger.info(
+            f"[TABLE DETECTION] Found {len(data_blocks)} data blocks below headers"
+        )
+
+        for block in data_blocks:
+            # Find existing column or create new
+            found_column = False
+            for col_x in list(columns.keys()):
+                if abs(block["center_x"] - col_x) < x_tolerance:
+                    columns[col_x].append(block)
+                    found_column = True
+                    break
+
+            if not found_column:
+                columns[block["center_x"]] = [block]
+
+        logger.info(f"[TABLE DETECTION] Grouped into {len(columns)} columns")
+
+        # Step 3: Match columns to field names
+        # If we have detected headers, use their X positions
+        # Otherwise, use spatial proximity to expected positions
+        column_field_map = {}
+
+        if detected_headers:
+            # Match columns to headers by X position
+            for field_key, header in detected_headers.items():
+                closest_col = None
+                min_dist = float("inf")
+
+                for col_x in columns.keys():
+                    dist = abs(col_x - header["center_x"])
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_col = col_x
+
+                if closest_col and min_dist < 100:  # Within 10%
+                    column_field_map[closest_col] = {
+                        "field_key": field_key,
+                        "header": header["text"],
+                        "question": field_headers[field_key]["question"],
+                    }
+                    logger.info(
+                        f"[TABLE DETECTION] Column at X={closest_col} mapped to '{field_key}' (header: '{header['text']}')"
+                    )
+        else:
+            # No headers detected - assign columns left-to-right to fields
+            sorted_columns = sorted(columns.keys())
+            for idx, (col_x, field) in enumerate(zip(sorted_columns, line_item_fields)):
+                field_key = field.get("key") or field.get("field_key")
+                column_field_map[col_x] = {
+                    "field_key": field_key,
+                    "header": None,
+                    "question": field.get("question", ""),
+                }
+                logger.info(
+                    f"[TABLE DETECTION] Column at X={col_x} assigned to '{field_key}' (no header)"
+                )
+
+        # Step 4: IMPROVED row detection using leftmost column as anchor
+        # Find leftmost column (likely Item No. or row identifier)
+        leftmost_col_x = min(columns.keys()) if columns else None
+
+        if not leftmost_col_x:
+            logger.warning("[TABLE DETECTION] No columns found for row detection")
+            return []
+
+        leftmost_blocks = columns.get(leftmost_col_x, [])
+        logger.info(
+            f"[TABLE DETECTION] Using leftmost column at X={leftmost_col_x} as row anchor ({len(leftmost_blocks)} blocks)"
+        )
+
+        # Each block in leftmost column defines a row
+        # Sort by Y position to get rows top-to-bottom
+        leftmost_blocks_sorted = sorted(leftmost_blocks, key=lambda b: b["center_y"])
+
+        if len(leftmost_blocks_sorted) < 2:
+            logger.warning(
+                "[TABLE DETECTION] Not enough blocks in leftmost column for row detection"
+            )
+            return []
+
+        # IMPROVED: Calculate median spacing between consecutive blocks
+        # This adapts to the actual table row height instead of using fixed spacing
+        y_differences = []
+        for i in range(len(leftmost_blocks_sorted) - 1):
+            y_diff = (
+                leftmost_blocks_sorted[i + 1]["center_y"]
+                - leftmost_blocks_sorted[i]["center_y"]
+            )
+            if y_diff > 10:  # Ignore tiny differences (likely noise)
+                y_differences.append(y_diff)
+
+        if y_differences:
+            # Use median spacing as minimum row spacing (robust to outliers)
+            y_differences_sorted = sorted(y_differences)
+            median_spacing = y_differences_sorted[len(y_differences_sorted) // 2]
+            # Use 70% of median as minimum (allows for slight variations)
+            min_row_spacing = max(30, median_spacing * 0.7)
+            logger.info(
+                f"[TABLE DETECTION] Calculated min row spacing: {min_row_spacing:.1f} (median: {median_spacing:.1f})"
+            )
+        else:
+            min_row_spacing = 40  # Fallback
+            logger.warning(
+                f"[TABLE DETECTION] Using fallback min row spacing: {min_row_spacing}"
+            )
+
+        # Filter out blocks that are too close together (likely multi-line text within same row)
+        anchor_blocks = []
+        last_y = None
+
+        for block in leftmost_blocks_sorted:
+            if last_y is None or (block["center_y"] - last_y) >= min_row_spacing:
+                anchor_blocks.append(block)
+                last_y = block["center_y"]
+            else:
+                logger.debug(
+                    f"[TABLE DETECTION] Skipping block '{block['text']}' at Y={block['center_y']} - too close to row at Y={last_y} (diff: {block['center_y'] - last_y:.1f})"
+                )
+
+        logger.info(
+            f"[TABLE DETECTION] Identified {len(anchor_blocks)} distinct rows from leftmost column"
+        )
+
+        # Step 5: Extract data for each row using anchor blocks
+        extracted_rows = []
+        # Y-tolerance should be slightly less than min_row_spacing to avoid overlaps
+        y_tolerance = min(min_row_spacing * 0.8, 60)  # Max 6% of height
+        logger.info(
+            f"[TABLE DETECTION] Using Y-tolerance of {y_tolerance:.1f} for row matching"
+        )
+
+        # Track which blocks have been used to prevent duplicates across rows
+        used_blocks = set()
+
+        for row_idx, anchor_block in enumerate(anchor_blocks[:max_rows], start=1):
+            row_y = anchor_block["center_y"]
+            row_data = {"row": row_idx, "fields": {}}
+            row_used_blocks = set()  # Track blocks used within THIS row
+
+            logger.debug(f"[TABLE DETECTION] Processing row {row_idx} at Y={row_y}")
+
+            # For each column, find ALL blocks within Y-tolerance and merge them
+            for col_x, field_info in column_field_map.items():
+                if col_x not in columns:
+                    continue
+
+                field_key = field_info["field_key"]
+                col_blocks = columns[col_x]
+
+                # Find ALL blocks within Y-tolerance (for multi-line cells)
+                # Skip blocks already used in previous rows OR in this row (other columns)
+                matching_blocks = []
+                for block in col_blocks:
+                    block_id = id(block)  # Unique identifier for this block
+                    if block_id in used_blocks or block_id in row_used_blocks:
+                        continue  # Skip already-used blocks
+
+                    y_diff = abs(block["center_y"] - row_y)
+                    if y_diff < y_tolerance:
+                        matching_blocks.append((y_diff, block, block_id))
+
+                if matching_blocks:
+                    # Sort by Y position to merge text in correct order
+                    matching_blocks.sort(key=lambda x: x[1]["center_y"])
+
+                    # Mark these blocks as used (both globally and for this row)
+                    for _, _, block_id in matching_blocks:
+                        used_blocks.add(block_id)
+                        row_used_blocks.add(block_id)
+
+                    # Merge text from all matching blocks (for multi-line cells)
+                    merged_text = " ".join([b[1]["text"] for b in matching_blocks])
+
+                    # Expand bbox to include all matching blocks
+                    all_bboxes = [b[1]["pixel_bbox"] for b in matching_blocks]
+                    merged_bbox = [
+                        min(bbox[0] for bbox in all_bboxes),  # x1
+                        min(bbox[1] for bbox in all_bboxes),  # y1
+                        max(bbox[2] for bbox in all_bboxes),  # x2
+                        max(bbox[3] for bbox in all_bboxes),  # y2
+                    ]
+
+                    # Average confidence
+                    avg_conf = sum(b[1]["conf"] for b in matching_blocks) / len(
+                        matching_blocks
+                    )
+
+                    row_data["fields"][field_key] = {
+                        "value": merged_text.strip(),
+                        "bbox": merged_bbox,
+                        "confidence": avg_conf / 100.0,
+                    }
+
+                    logger.debug(
+                        f"[TABLE DETECTION] Row {row_idx}, {field_key}: '{merged_text[:30]}' at bbox {merged_bbox}"
+                    )
+
+                    if len(matching_blocks) > 1:
+                        logger.debug(
+                            f"[TABLE DETECTION] Row {row_idx}, {field_key}: Merged {len(matching_blocks)} blocks into '{merged_text[:50]}'"
+                        )
+
+            # Only include rows that have at least 2 fields (avoid header-only or partial rows)
+            if len(row_data["fields"]) >= 2:
+                extracted_rows.append(row_data)
+                logger.info(
+                    f"[TABLE DETECTION] Row {row_idx}: {len(row_data['fields'])} fields extracted - {list(row_data['fields'].keys())}"
+                )
+            else:
+                logger.debug(
+                    f"[TABLE DETECTION] Row {row_idx}: Skipped (only {len(row_data['fields'])} field(s))"
+                )
+
+        logger.info(
+            f"[TABLE DETECTION] Successfully extracted {len(extracted_rows)} rows with table structure"
+        )
+        return extracted_rows
+
+    except Exception as e:
+        logger.error(f"[TABLE DETECTION] Error in table extraction: {e}", exc_info=True)
+        return []
+
+
 def extract_invoice_fields_layoutlm(
     image_path: str,
     custom_fields: list = None,
@@ -629,43 +1133,14 @@ def extract_invoice_fields_layoutlm(
             logger.info("No template hints available for this extraction")
 
         # Define questions for invoice fields
-        # Start with default fields, then add/override with custom fields
-        logger.info("Initializing with default invoice fields")
-        questions = {
-            "invoice_number": {
-                "question": "What is the invoice number?",
-                "category": "invoice",
-                "type": "text",
-            },
-            "invoice_date": {
-                "question": "What is the invoice date?",
-                "category": "invoice",
-                "type": "date",
-            },
-            "total_amount": {
-                "question": "What is the total amount?",
-                "category": "amounts",
-                "type": "currency",
-            },
-            "vendor_name": {
-                "question": "What is the vendor name?",
-                "category": "vendor",
-                "type": "text",
-            },
-            "po_number": {
-                "question": "What is the PO number?",
-                "category": "invoice",
-                "type": "text",
-            },
-        }
+        # ONLY use default fields if no custom fields provided
+        # (Batch mode always provides custom fields, so no defaults)
         line_item_fields = []
 
-        # Add or override with custom fields if provided
         if custom_fields:
-            logger.info(
-                f"Adding {len(custom_fields)} custom field definitions to defaults"
-            )
-            logger.info(f"Custom fields received: {custom_fields}")
+            # Batch mode or custom template - use ONLY custom fields
+            logger.info(f"Using {len(custom_fields)} custom fields (no defaults)")
+            questions = {}
 
             for field in custom_fields:
                 field_key = field.get("key") or field.get("field_key")
@@ -683,11 +1158,39 @@ def extract_invoice_fields_layoutlm(
                     if category == "line_items":
                         line_item_fields.append(field_key)
 
-                    logger.info(f"Added/updated question for {field_key}: {question}")
+                    logger.info(f"Added question for {field_key}: {question}")
                 else:
                     logger.warning(f"Skipping invalid field: {field}")
         else:
-            logger.info("No custom fields provided - using only default questions")
+            # Legacy mode - no custom fields, use defaults
+            logger.info("No custom fields provided - using default invoice fields")
+            questions = {
+                "invoice_number": {
+                    "question": "What is the invoice number?",
+                    "category": "invoice",
+                    "type": "text",
+                },
+                "invoice_date": {
+                    "question": "What is the invoice date?",
+                    "category": "invoice",
+                    "type": "date",
+                },
+                "total_amount": {
+                    "question": "What is the total amount?",
+                    "category": "amounts",
+                    "type": "currency",
+                },
+                "vendor_name": {
+                    "question": "What is the vendor name?",
+                    "category": "vendor",
+                    "type": "text",
+                },
+                "po_number": {
+                    "question": "What is the PO number?",
+                    "category": "invoice",
+                    "type": "text",
+                },
+            }
 
         fields = []
         field_id = start_field_id
@@ -697,6 +1200,77 @@ def extract_invoice_fields_layoutlm(
         )
         logger.info(f"Line item fields detected: {line_item_fields}")
 
+        # NEW APPROACH: If we have line item fields, use intelligent table extraction
+        # This extracts all line items together in a structured way (row-by-row)
+        table_rows_extracted = False
+        if line_item_fields:
+            logger.info(
+                f"[TABLE MODE] Detected {len(line_item_fields)} line item fields - using intelligent table extraction"
+            )
+
+            # Build line item field definitions for table extraction
+            line_item_field_defs = []
+            for field_key in line_item_fields:
+                if field_key in questions:
+                    line_item_field_defs.append(
+                        {
+                            "key": field_key,
+                            "field_key": field_key,
+                            "question": questions[field_key]["question"],
+                            "category": questions[field_key].get("category", ""),
+                            "type": questions[field_key].get("type", "text"),
+                        }
+                    )
+
+            # Extract table rows using intelligent detection
+            table_rows = extract_table_rows_intelligent(
+                image_path=image_path,
+                line_item_fields=line_item_field_defs,
+                ocr_words=ocr_words,
+                img_width=img_width,
+                img_height=img_height,
+                max_rows=50,  # Increased to handle larger tables
+            )
+
+            if table_rows:
+                logger.info(
+                    f"[TABLE MODE] Successfully extracted {len(table_rows)} rows from table"
+                )
+                table_rows_extracted = True
+
+                # Convert table rows to field format
+                for row_data in table_rows:
+                    row_num = row_data["row"]
+                    row_fields = row_data["fields"]
+
+                    for field_key, field_data in row_fields.items():
+                        label = f"{field_key}_row_{row_num}"
+
+                        fields.append(
+                            {
+                                "id": field_id,
+                                "label": label,
+                                "field_name": label,
+                                "value": field_data["value"],
+                                "bbox": field_data["bbox"],
+                                "confidence": float(field_data["confidence"]),
+                                "source": "table_extraction",
+                                "is_line_item": True,
+                                "row_index": row_num,
+                            }
+                        )
+
+                        logger.info(
+                            f"✓ {label}: {field_data['value']} bbox={field_data['bbox']} (confidence: {field_data['confidence']:.2f})"
+                        )
+
+                        field_id += 1
+            else:
+                logger.warning(
+                    "[TABLE MODE] Table extraction returned no rows - falling back to naive Q&A"
+                )
+
+        # Process remaining fields (non-line-items or if table extraction failed)
         for field_label, field_config in questions.items():
             try:
                 question = (
@@ -711,10 +1285,17 @@ def extract_invoice_fields_layoutlm(
                 )
                 is_line_item = category == "line_items"
 
-                # For line items, ask for multiple results
+                # Skip line items if already extracted via table
+                if is_line_item and table_rows_extracted:
+                    logger.info(
+                        f"[SKIP] {field_label} already extracted via table detection"
+                    )
+                    continue
+
+                # For line items that weren't table-extracted, use fallback Q&A
                 if is_line_item:
                     logger.info(
-                        f"[LINE ITEM] Extracting {field_label} from table rows..."
+                        f"[FALLBACK Q&A] Extracting {field_label} using top_k=5..."
                     )
                     result = doc_qa(image=image, question=question, top_k=5)
                 else:
@@ -792,6 +1373,7 @@ def extract_invoice_fields_layoutlm(
                                 {
                                     "id": field_id,
                                     "label": label,
+                                    "field_name": label,  # Add field_name for frontend compatibility
                                     "value": answer,
                                     "bbox": bbox,
                                     "confidence": float(final_confidence),
@@ -959,7 +1541,9 @@ def extract_fields_with_donut(
                         int(1000 * x2 / image_width),
                         int(1000 * y2 / image_height),
                     ]
-                    logger.info(f"Normalized {field['label']} bbox from pixels [{x1},{y1},{x2},{y2}] to 0-1000 scale {field['bbox']}")
+                    logger.info(
+                        f"Normalized {field['label']} bbox from pixels [{x1},{y1},{x2},{y2}] to 0-1000 scale {field['bbox']}"
+                    )
 
         return {
             "raw_output": {
@@ -1529,13 +2113,14 @@ def reextract_bbox():
                 logger.info(f"Upscaled image to: {new_size}")
 
             # Run OCR on preprocessed image with optimized config
-            # --psm 7: Treat image as a single text line
+            # --psm 6: Treat image as a uniform block of text (handles multiline better)
             # --oem 3: Use LSTM OCR Engine
-            ocr_config = "--psm 7 --oem 3"
+            ocr_config = "--psm 6 --oem 3"
             ocr_result = pytesseract.image_to_string(
                 cropped_enhanced, config=ocr_config
             )
-            extracted_text = ocr_result.strip()
+            # Join multiple lines with space (for multiline cells in tables)
+            extracted_text = " ".join(ocr_result.strip().split("\n"))
 
             # Get confidence from enhanced image
             ocr_data = pytesseract.image_to_data(
