@@ -358,19 +358,52 @@ function AnnotationCanvas({ documentData }) {
   }, []);
 
   // Convert normalized coordinates [0,0,1000,1000] to actual pixel coordinates
+  // CRITICAL: Use extraction image dimensions (from backend), not PDF render dimensions
   const normalizedToPixels = useCallback(
     (bbox) => {
       if (!bbox || !pageWidth || !pageHeight) return null;
 
+      // Get extraction image dimensions from backend metadata
+      const extractionWidth = documentData?.metadata?.image_size?.width;
+      const extractionHeight = documentData?.metadata?.image_size?.height;
+
+      if (!extractionWidth || !extractionHeight) {
+        console.warn('[normalizedToPixels] Missing extraction image dimensions, falling back to PDF render dimensions');
+        const [x1, y1, x2, y2] = bbox;
+        return {
+          x: (x1 / 1000) * pageWidth,
+          y: (y1 / 1000) * pageHeight,
+          width: ((x2 - x1) / 1000) * pageWidth,
+          height: ((y2 - y1) / 1000) * pageHeight,
+        };
+      }
+
+      // Step 1: Convert normalized coords (0-1000) to extraction image pixel coords
       const [x1, y1, x2, y2] = bbox;
+      const extractionX1 = (x1 / 1000) * extractionWidth;
+      const extractionY1 = (y1 / 1000) * extractionHeight;
+      const extractionX2 = (x2 / 1000) * extractionWidth;
+      const extractionY2 = (y2 / 1000) * extractionHeight;
+
+      // Step 2: Scale from extraction dimensions to PDF render dimensions
+      const scaleX = pageWidth / extractionWidth;
+      const scaleY = pageHeight / extractionHeight;
+
+      const scaledX = extractionX1 * scaleX;
+      const scaledY = extractionY1 * scaleY;
+      const scaledWidth = (extractionX2 - extractionX1) * scaleX;
+      const scaledHeight = (extractionY2 - extractionY1) * scaleY;
+
+      console.log(`[normalizedToPixels] bbox [${x1},${y1},${x2},${y2}] -> extraction [${extractionX1.toFixed(1)},${extractionY1.toFixed(1)},${extractionX2.toFixed(1)},${extractionY2.toFixed(1)}] -> scaled [${scaledX.toFixed(1)},${scaledY.toFixed(1)},${scaledWidth.toFixed(1)},${scaledHeight.toFixed(1)}] (extraction ${extractionWidth}x${extractionHeight}, render ${pageWidth.toFixed(1)}x${pageHeight.toFixed(1)})`);
+
       return {
-        x: (x1 / 1000) * pageWidth,
-        y: (y1 / 1000) * pageHeight,
-        width: ((x2 - x1) / 1000) * pageWidth,
-        height: ((y2 - y1) / 1000) * pageHeight,
+        x: scaledX,
+        y: scaledY,
+        width: scaledWidth,
+        height: scaledHeight,
       };
     },
-    [pageWidth, pageHeight]
+    [pageWidth, pageHeight, documentData?.metadata?.image_size]
   );
 
   // Memoize inline styles to prevent re-renders
@@ -1859,30 +1892,12 @@ function AnnotationCanvas({ documentData }) {
             </div>
             {numPages && (
               <div className="page-controls">
-                <button
-                  className="btn-page"
-                  onClick={() =>
-                    setCurrentPage((prev) => Math.max(1, prev - 1))
-                  }
-                  disabled={currentPage === 1}
-                >
-                  ← Prev
-                </button>
+                {/* Removed page navigation - showing all pages */}
                 <span className="page-info">
-                  Page {currentPage} of {numPages}
+                  All Pages ({numPages} {numPages === 1 ? 'page' : 'pages'})
                 </span>
-                <button
-                  className="btn-page"
-                  onClick={() =>
-                    setCurrentPage((prev) => Math.min(numPages, prev + 1))
-                  }
-                  disabled={currentPage === numPages}
-                >
-                  Next →
-                </button>
-                {/* Column Suggestion Button - for same page */}
-                {customFields.filter((f) => f.page === currentPage && f.bbox)
-                  .length > 0 && (
+                {/* Column Suggestion Button */}
+                {customFields.filter((f) => f.bbox).length > 0 && (
                   <button
                     className="btn-page"
                     onClick={handleSuggestColumns}
@@ -1893,36 +1908,12 @@ function AnnotationCanvas({ documentData }) {
                       fontWeight: "bold",
                     }}
                     title={`Suggest other columns based on ${
-                      customFields.filter(
-                        (f) => f.page === currentPage && f.bbox
-                      ).length
+                      customFields.filter((f) => f.bbox).length
                     } selected field(s)`}
                   >
                     🔮 Suggest Columns
                   </button>
                 )}
-                {/* Template Application Button - for next page */}
-                {customFields.filter((f) => f.page === currentPage && f.bbox)
-                  .length > 0 &&
-                  currentPage < numPages && (
-                    <button
-                      className="btn-page"
-                      onClick={handleApplyTemplateToNextPage}
-                      style={{
-                        backgroundColor: "#9c27b0",
-                        color: "white",
-                        marginLeft: "0.5rem",
-                        fontWeight: "bold",
-                      }}
-                      title={`Apply ${
-                        customFields.filter(
-                          (f) => f.page === currentPage && f.bbox
-                        ).length
-                      } field template(s) to page ${currentPage + 1}`}
-                    >
-                      🎯 Apply Template to Page {currentPage + 1}
-                    </button>
-                  )}
                 {/* Save Template Button */}
                 {customFields.length > 0 && (
                   <button
@@ -1994,7 +1985,7 @@ function AnnotationCanvas({ documentData }) {
 
           <div className="document-viewer" ref={containerRef}>
             {mimeType === "application/pdf" ? (
-              // PDF Viewer
+              // PDF Viewer - All pages stacked vertically
               <div className="pdf-container">
                 {documentSource && (
                   <Document
@@ -2007,47 +1998,88 @@ function AnnotationCanvas({ documentData }) {
                       <div className="error-message">Failed to load PDF</div>
                     }
                   >
-                    <div className="page-wrapper">
-                      <div style={pdfScaleStyle}>
-                        <MemoizedPDFPage
-                          pageNumber={currentPage}
-                          width={pageRenderWidth}
-                          onRenderSuccess={onPageRenderSuccess}
-                        />
-                      </div>
-
-                      {/* Konva Overlay for Annotations - Positioned over the PDF */}
-                      {pageWidth && pageHeight && (
-                        <div
-                          className="annotation-overlay"
-                          style={overlayScaleStyle}
-                        >
-                          <Stage
-                            width={pageWidth}
-                            height={pageHeight}
-                            onMouseDown={handleStageMouseDown}
-                            onMouseMove={handleStageMouseMove}
-                            onMouseUp={handleStageMouseUp}
-                            style={{
-                              cursor: drawingMode ? "crosshair" : "default",
+                    {/* Render all pages vertically */}
+                    {Array.from(new Array(numPages), (el, index) => (
+                      <div key={`page_${index + 1}`} className="page-wrapper" style={{ marginBottom: '20px' }}>
+                        <div style={pdfScaleStyle}>
+                          <MemoizedPDFPage
+                            pageNumber={index + 1}
+                            width={pageRenderWidth}
+                            onRenderSuccess={(page) => {
+                              // Store dimensions for first page
+                              if (index === 0) {
+                                onPageRenderSuccess(page);
+                              }
                             }}
+                          />
+                        </div>
+
+                        {/* Konva Overlay for Annotations - Only on first page (where fields were extracted) */}
+                        {pageWidth && pageHeight && index === 0 && (
+                          <div
+                            className="annotation-overlay"
+                            style={overlayScaleStyle}
                           >
-                            <Layer>
-                              {fields
-                                .filter((field) => {
-                                  // Show field if: has bbox AND (no page specified OR matches current page)
-                                  const hasPage = field.page !== undefined;
-                                  const matchesPage =
-                                    !hasPage || field.page === currentPage;
-                                  return field.bbox && matchesPage;
-                                })
-                                .map((field, index) => {
+                            <Stage
+                              width={pageWidth}
+                              height={pageHeight}
+                              onMouseDown={handleStageMouseDown}
+                              onMouseMove={handleStageMouseMove}
+                              onMouseUp={handleStageMouseUp}
+                              style={{
+                                cursor: drawingMode ? "crosshair" : "default",
+                              }}
+                            >
+                              <Layer>
+                                {/* Debug: Log all fields and their bboxes */}
+                                {fields.length > 0 && console.log('[AnnotationCanvas] Rendering fields:', fields.map(f => ({ 
+                                  label: f.label, 
+                                  value: f.value,
+                                  bbox: f.bbox, 
+                                  page: f.page,
+                                  hasValidBbox: f.bbox && f.bbox.length === 4
+                                })))}
+                                
+                                {fields
+                                  .filter((field) => {
+                                    // Show field if: has bbox AND (no page specified OR matches this page)
+                                    const hasPage = field.page !== undefined;
+                                    const matchesPage =
+                                      !hasPage || field.page === (index + 1);
+                                    const hasValidBbox = field.bbox && field.bbox.length === 4;
+                                    
+                                    if (!hasValidBbox) {
+                                      console.warn('[AnnotationCanvas] Field missing valid bbox:', field.label, field.bbox);
+                                    }
+                                    
+                                    return hasValidBbox && matchesPage;
+                                  })
+                                  .map((field, fieldIndex) => {
                                   // Use updated bbox if available, otherwise original
                                   const currentBbox =
                                     updatedFields[field.id]?.bbox || field.bbox;
                                   const pixels =
                                     normalizedToPixels(currentBbox);
-                                  if (!pixels) return null;
+                                    
+                                  console.log(`[AnnotationCanvas] Field "${field.label}" (${field.value}):`, {
+                                    bboxRaw: currentBbox,
+                                    bboxValues: currentBbox ? `[${currentBbox[0]}, ${currentBbox[1]}, ${currentBbox[2]}, ${currentBbox[3]}]` : 'null',
+                                    pixels: pixels,
+                                    pixelValues: pixels ? `x:${pixels.x.toFixed(1)}, y:${pixels.y.toFixed(1)}, w:${pixels.width.toFixed(1)}, h:${pixels.height.toFixed(1)}` : 'null',
+                                    pageWidth,
+                                    pageHeight,
+                                    isNormalized: currentBbox && currentBbox.every(c => c <= 1000),
+                                    isOnScreen: pixels && pixels.x >= 0 && pixels.y >= 0 && pixels.x < pageWidth && pixels.y < pageHeight,
+                                    rectWillRender: !!pixels
+                                  });
+                                  
+                                  if (!pixels) {
+                                    console.error(`[AnnotationCanvas] ❌ No pixels for field "${field.label}" - WILL NOT RENDER`);
+                                    return null;
+                                  }
+                                  
+                                  // Log the actual Rect being rendered
+                                  console.log(`[AnnotationCanvas] ✅ Rendering Rect for "${field.label}" at x=${pixels.x.toFixed(1)}, y=${pixels.y.toFixed(1)}, w=${pixels.width.toFixed(1)}, h=${pixels.height.toFixed(1)}`);
 
                                   const isSelected =
                                     selectedField?.id === field.id;
@@ -2057,6 +2089,15 @@ function AnnotationCanvas({ documentData }) {
                                       <Rect
                                         ref={(el) => {
                                           shapeRefs.current[field.id] = el;
+                                          if (el) {
+                                            console.log(`[AnnotationCanvas] Rect ref set for "${field.label}":`, {
+                                              x: el.x(),
+                                              y: el.y(),
+                                              width: el.width(),
+                                              height: el.height(),
+                                              visible: el.visible()
+                                            });
+                                          }
                                         }}
                                         x={pixels.x}
                                         y={pixels.y}
@@ -2610,6 +2651,7 @@ function AnnotationCanvas({ documentData }) {
                         />
                       )}
                     </div>
+                    ))}
                   </Document>
                 )}
               </div>

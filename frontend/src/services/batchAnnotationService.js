@@ -41,7 +41,9 @@ export class BatchAnnotationService {
       });
 
       if (templateHints) {
-        console.log(`[BatchAnnotation] Using template: ${templateHints.template_name} with ${templateHints.field_hints.length} hints`);
+        console.log(
+          `[BatchAnnotation] Using template: ${templateHints.template_name} with ${templateHints.field_hints.length} hints`
+        );
       }
 
       // Sort fields: required first (priority), then optional

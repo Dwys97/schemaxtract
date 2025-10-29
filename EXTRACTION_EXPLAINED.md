@@ -5,14 +5,16 @@
 Your system uses the **same AI approach** as Rossum and other commercial document extraction tools:
 
 ### 1. **LayoutLM Document Q&A** (`impira/layoutlm-invoices`)
+
 ```python
 _doc_qa_pipeline = pipeline(
-    "document-question-answering", 
+    "document-question-answering",
     model="impira/layoutlm-invoices"
 )
 ```
 
 This is a **multimodal transformer** that understands:
+
 - **Visual layout** (where text appears on the page)
 - **Text content** (what the text says)
 - **Spatial relationships** (text near other text, tables, etc.)
@@ -38,6 +40,7 @@ for field_label, question in questions.items():
 ```
 
 The model:
+
 1. **Reads the entire document** (vision + text)
 2. **Understands the question** ("What is the vendor name?")
 3. **Locates the answer** visually and textually
@@ -58,12 +61,14 @@ This gives you the yellow highlight boxes you see in Rossum!
 ## Why It Works So Well
 
 ### Rossum's Approach:
+
 1. Visual AI model (LayoutLM or similar)
 2. Asks "What is X?" for each field
 3. Returns answer + bbox coordinates
 4. Shows yellow highlights
 
 ### Your System's Approach:
+
 1. **Same:** `impira/layoutlm-invoices` (LayoutLM)
 2. **Same:** Question-answering for each field
 3. **Same:** Bbox extraction via OCR matching
@@ -117,21 +122,27 @@ This gives you the yellow highlight boxes you see in Rossum!
 ## What Makes Extraction Accurate
 
 ### 1. **Multimodal Understanding**
+
 LayoutLM doesn't just read text - it **sees the document** like a human:
+
 - Headers are visually distinct (larger, bold)
 - Amounts are right-aligned in tables
 - Dates follow specific formats
 - Labels appear near their values
 
 ### 2. **Context Awareness**
+
 The model knows invoice structure:
+
 - Total amounts are usually at bottom-right
 - Invoice numbers are often in top-right
 - Vendor info is typically in top-left
 - Line items are in table format
 
 ### 3. **Pre-training on Invoices**
+
 The `impira/layoutlm-invoices` model was trained on millions of invoices, so it knows:
+
 - Common field names ("Invoice No", "Bill To", "Total", etc.)
 - Invoice layouts from different vendors
 - Currency formats, date formats, address formats
@@ -152,6 +163,7 @@ When you define a custom field:
 ```
 
 The system:
+
 1. Adds this question to LayoutLM's queue
 2. LayoutLM searches the entire document for "CPC"
 3. Uses visual + textual clues to find the value
@@ -174,6 +186,7 @@ This extracts multiple rows from tables, just like you see in the Rossum screens
 ## Current Extraction Quality
 
 Your system **already matches Rossum** in terms of:
+
 - ✅ Visual document understanding (LayoutLM)
 - ✅ Question-based extraction (Q&A approach)
 - ✅ Bbox highlighting (OCR matching)
@@ -182,6 +195,7 @@ Your system **already matches Rossum** in terms of:
 - ✅ Confidence scores (model output)
 
 **Plus you have:**
+
 - ✨ **Template hints** (few-shot learning) - Rossum charges extra for this!
 - ✨ **Batch processing** (progressive extraction)
 - ✨ **Open source** (no vendor lock-in)
@@ -191,17 +205,21 @@ Your system **already matches Rossum** in terms of:
 To match or exceed Rossum quality:
 
 ### 1. **More Specific Questions**
+
 Instead of generic questions, make them context-specific:
+
 ```javascript
 // Generic
-"What is the number?"
+"What is the number?";
 
 // Specific (better)
-"What is the invoice number or document number?"
+"What is the invoice number or document number?";
 ```
 
 ### 2. **Field Categories**
+
 Organize fields by document section:
+
 ```javascript
 {
   vendor: ["vendor_name", "vendor_address", "vendor_vat"],
@@ -211,7 +229,9 @@ Organize fields by document section:
 ```
 
 ### 3. **Post-Processing**
+
 Add validation and formatting:
+
 ```python
 # Format dates consistently
 if field_type == "date":
@@ -223,31 +243,34 @@ if field_type == "currency":
 ```
 
 ### 4. **Template Learning**
+
 Save good extractions as templates (already implemented!):
+
 - Rossum calls this "Training" - you have it as "Save as Template"
 - Your system automatically applies hints when confidence < 0.7
 - This improves accuracy over time
 
 ## Comparison with Rossum
 
-| Feature | Rossum | Your System |
-|---------|--------|-------------|
-| AI Model | LayoutLM-based | ✅ Same (impira/layoutlm-invoices) |
-| Q&A Extraction | Yes | ✅ Yes |
-| Bbox Highlighting | Yes | ✅ Yes |
-| Custom Fields | Yes (paid) | ✅ Yes (free) |
-| Line Items | Yes | ✅ Yes |
-| Template Learning | Yes (expensive) | ✅ Yes (free) |
-| Batch Processing | Yes | ✅ Yes |
-| API Access | Yes (paid) | ✅ Yes (open source) |
-| Cloud Hosted | Yes | ⚠️ Self-hosted |
-| Support | Commercial | ⚠️ Community |
+| Feature           | Rossum          | Your System                        |
+| ----------------- | --------------- | ---------------------------------- |
+| AI Model          | LayoutLM-based  | ✅ Same (impira/layoutlm-invoices) |
+| Q&A Extraction    | Yes             | ✅ Yes                             |
+| Bbox Highlighting | Yes             | ✅ Yes                             |
+| Custom Fields     | Yes (paid)      | ✅ Yes (free)                      |
+| Line Items        | Yes             | ✅ Yes                             |
+| Template Learning | Yes (expensive) | ✅ Yes (free)                      |
+| Batch Processing  | Yes             | ✅ Yes                             |
+| API Access        | Yes (paid)      | ✅ Yes (open source)               |
+| Cloud Hosted      | Yes             | ⚠️ Self-hosted                     |
+| Support           | Commercial      | ⚠️ Community                       |
 
 ## Bottom Line
 
-**You're using the same technology as Rossum!** 
+**You're using the same technology as Rossum!**
 
 The difference is:
+
 - Rossum has **polished UI** and **commercial support**
 - Rossum has **more training data** from thousands of customers
 - Rossum handles **edge cases** better (years of refinement)
@@ -255,6 +278,7 @@ The difference is:
 But your **core extraction quality** is already comparable because you're using the same AI models and approach.
 
 To improve further, focus on:
+
 1. Better question phrasing for your specific document types
 2. Saving templates for recurring vendors
 3. Post-processing and validation

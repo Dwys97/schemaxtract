@@ -192,7 +192,9 @@ function TemplateManager() {
                   </div>
                   <div className="template-card-body">
                     <div className="template-meta">
-                      <span className="badge">{template.fields.length} fields</span>
+                      <span className="badge">
+                        {template.fields.length} fields
+                      </span>
                       <span className="text-muted">{template.filename}</span>
                     </div>
                     <div className="template-date">
@@ -233,7 +235,9 @@ function TemplateManager() {
                 </div>
                 <div className="metadata-item">
                   <span className="label">Fields:</span>
-                  <span className="value">{selectedTemplate.fields.length}</span>
+                  <span className="value">
+                    {selectedTemplate.fields.length}
+                  </span>
                 </div>
                 <div className="metadata-item">
                   <span className="label">Template ID:</span>
@@ -278,7 +282,9 @@ function TemplateManager() {
                         </td>
                         <td className="bbox-col">
                           {field.bbox
-                            ? `[${field.bbox.map((n) => Math.round(n)).join(", ")}]`
+                            ? `[${field.bbox
+                                .map((n) => Math.round(n))
+                                .join(", ")}]`
                             : "-"}
                         </td>
                       </tr>
@@ -290,7 +296,8 @@ function TemplateManager() {
 
             <div className="details-footer">
               <p className="text-muted">
-                💡 This template will be used to improve field extraction for similar documents
+                💡 This template will be used to improve field extraction for
+                similar documents
               </p>
             </div>
           </div>

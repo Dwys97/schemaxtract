@@ -1,11 +1,13 @@
 # ✅ Template Hints Integration - Complete
 
 ## Overview
+
 The few-shot learning system with template hints is now **fully integrated**. The system automatically uses saved templates to improve extraction accuracy on similar documents.
 
 ## How It Works
 
 ### 1. **Save a Template** (One-Time Setup)
+
 - Upload and process a document
 - Review and confirm all field extractions are accurate
 - Click **"Save as Template"** button in the document list
@@ -16,7 +18,9 @@ The few-shot learning system with template hints is now **fully integrated**. Th
   - Confidence scores
 
 ### 2. **Automatic Template Matching** (Every Upload)
+
 When you upload a new document:
+
 1. **Frontend extracts vendor name** from OCR text
 2. **Searches templates** using Jaccard similarity algorithm
 3. **Finds best match** (bonus points for vendor name similarity)
@@ -24,7 +28,9 @@ When you upload a new document:
 5. **Passes hints** through the extraction pipeline
 
 ### 3. **Template-Guided Extraction** (Backend)
+
 During LayoutLM field extraction:
+
 1. **LayoutLM extracts fields** using Q&A model
 2. **For each field with confidence < 0.7:**
    - Check if template has bbox hint for this field
@@ -34,6 +40,7 @@ During LayoutLM field extraction:
 3. **Mark field source** as `layoutlm_qa_with_template`
 
 ### 4. **View Results**
+
 - Fields extracted with template help show higher confidence
 - Review tab shows all fields with their bboxes
 - You can see which fields used template hints in the logs
@@ -72,11 +79,13 @@ Return Enhanced Fields
 ## Code Changes Summary
 
 ### Frontend
+
 1. **DocumentUploader.jsx** - STEP 1.5: Find matching templates after OCR
 2. **batchAnnotationService.js** - Pass template_hints to backend
 3. **templateService.js** - Template matching and hint creation
 
 ### Backend
+
 1. **main.py** `/extract-batch` - Accept template_hints parameter
 2. **extract_fields_with_donut()** - Pass template_hints through
 3. **extract_invoice_fields_layoutlm()** - Apply bbox hints when confidence low
@@ -88,11 +97,12 @@ Return Enhanced Fields
 ✅ **Improved Accuracy** - Uses spatial hints from similar docs  
 ✅ **No Retraining** - Works without model fine-tuning  
 ✅ **Fast** - Template matching happens in milliseconds  
-✅ **Transparent** - Logs show when templates are applied  
+✅ **Transparent** - Logs show when templates are applied
 
 ## Example Logs
 
 ### Template Matching (Frontend Console)
+
 ```
 [Template Matching] Searching for templates similar to: "ACME Corporation Invoice #12345..."
 [Template Matching] Found matching template: "ACME Corp Standard Invoice"
@@ -102,6 +112,7 @@ Return Enhanced Fields
 ```
 
 ### Template Application (Backend Logs)
+
 ```
 [/extract-batch] Using template 'ACME Corp Standard Invoice' with 5 bbox hints
   Template hint for invoice_number: bbox=[120, 45, 280, 65], confidence=0.92

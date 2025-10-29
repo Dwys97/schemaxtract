@@ -15,35 +15,35 @@ export const templateService = {
   saveAsTemplate(document, templateName = null) {
     try {
       const templates = this.getAllTemplates();
-      
+
       // Generate template name from vendor or use custom name
       const name = templateName || this.suggestTemplateName(document);
-      
+
       const template = {
         id: `template_${Date.now()}`,
         name: name,
         documentId: document.id,
         filename: document.filename,
         createdAt: new Date().toISOString(),
-        fields: document.fields.map(f => ({
+        fields: document.fields.map((f) => ({
           label: f.label,
           value: f.value,
           bbox: f.bbox,
           confidence: f.confidence,
-          type: this.inferFieldType(f.label)
+          type: this.inferFieldType(f.label),
         })),
         metadata: {
           ...document.metadata,
           originalStatus: document.status,
-          fieldCount: document.fields?.length || 0
+          fieldCount: document.fields?.length || 0,
         },
         // Store image data URL for visual matching (optional)
-        imagePreview: document.imageUrl || null
+        imagePreview: document.imageUrl || null,
       };
-      
+
       templates[template.id] = template;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(templates));
-      
+
       console.log(`[Template] Saved: ${name}`, template);
       return template;
     } catch (error) {
@@ -70,8 +70,8 @@ export const templateService = {
    */
   listTemplates() {
     const templates = this.getAllTemplates();
-    return Object.values(templates).sort((a, b) => 
-      new Date(b.createdAt) - new Date(a.createdAt)
+    return Object.values(templates).sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
     );
   },
 
@@ -111,37 +111,39 @@ export const templateService = {
     if (templates.length === 0) return [];
 
     // Score each template based on field overlap
-    const scored = templates.map(template => {
+    const scored = templates.map((template) => {
       const templateFieldLabels = new Set(
-        template.fields.map(f => f.label.toLowerCase())
+        template.fields.map((f) => f.label.toLowerCase())
       );
       const documentFieldLabels = new Set(
-        fields.map(f => f.label.toLowerCase())
+        fields.map((f) => f.label.toLowerCase())
       );
 
       // Calculate Jaccard similarity
       const intersection = new Set(
-        [...documentFieldLabels].filter(x => templateFieldLabels.has(x))
+        [...documentFieldLabels].filter((x) => templateFieldLabels.has(x))
       );
       const union = new Set([...documentFieldLabels, ...templateFieldLabels]);
-      
+
       const similarity = union.size > 0 ? intersection.size / union.size : 0;
 
       // Bonus for vendor name match
-      const docVendor = fields.find(f => 
-        f.label.toLowerCase().includes('vendor')
-      )?.value?.toLowerCase();
-      const templateVendor = template.fields.find(f => 
-        f.label.toLowerCase().includes('vendor')
-      )?.value?.toLowerCase();
-      
-      const vendorBonus = docVendor && templateVendor && 
-        docVendor.includes(templateVendor) ? 0.3 : 0;
+      const docVendor = fields
+        .find((f) => f.label.toLowerCase().includes("vendor"))
+        ?.value?.toLowerCase();
+      const templateVendor = template.fields
+        .find((f) => f.label.toLowerCase().includes("vendor"))
+        ?.value?.toLowerCase();
+
+      const vendorBonus =
+        docVendor && templateVendor && docVendor.includes(templateVendor)
+          ? 0.3
+          : 0;
 
       return {
         template,
         score: similarity + vendorBonus,
-        matchedFields: intersection.size
+        matchedFields: intersection.size,
       };
     });
 
@@ -149,7 +151,7 @@ export const templateService = {
     return scored
       .sort((a, b) => b.score - a.score)
       .slice(0, topK)
-      .filter(s => s.score > 0.2); // Minimum similarity threshold
+      .filter((s) => s.score > 0.2); // Minimum similarity threshold
   },
 
   /**
@@ -158,11 +160,11 @@ export const templateService = {
    */
   applyTemplateHints(template, currentFields) {
     const hints = [];
-    
-    template.fields.forEach(templateField => {
+
+    template.fields.forEach((templateField) => {
       // Check if field exists in current extraction
       const currentField = currentFields.find(
-        f => f.label.toLowerCase() === templateField.label.toLowerCase()
+        (f) => f.label.toLowerCase() === templateField.label.toLowerCase()
       );
 
       if (!currentField) {
@@ -171,9 +173,9 @@ export const templateService = {
           label: templateField.label,
           suggestedBbox: templateField.bbox,
           type: templateField.type,
-          source: 'template_hint',
+          source: "template_hint",
           confidence: 0.6, // Lower confidence for template hints
-          fromTemplate: template.id
+          fromTemplate: template.id,
         });
       } else if (currentField.confidence < 0.7) {
         // Field has low confidence - template bbox might help
@@ -181,7 +183,7 @@ export const templateService = {
           ...currentField,
           alternativeBbox: templateField.bbox,
           templateConfidence: templateField.confidence,
-          source: 'template_boost'
+          source: "template_boost",
         });
       }
     });
@@ -194,23 +196,24 @@ export const templateService = {
    */
   suggestTemplateName(document) {
     // Try to find vendor name in fields
-    const vendorField = document.fields?.find(f => 
-      f.label.toLowerCase().includes('vendor') ||
-      f.label.toLowerCase().includes('supplier') ||
-      f.label.toLowerCase().includes('seller')
+    const vendorField = document.fields?.find(
+      (f) =>
+        f.label.toLowerCase().includes("vendor") ||
+        f.label.toLowerCase().includes("supplier") ||
+        f.label.toLowerCase().includes("seller")
     );
 
     if (vendorField?.value) {
       return vendorField.value
-        .replace(/[^a-zA-Z0-9\s]/g, '')
-        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9\s]/g, "")
+        .replace(/\s+/g, "_")
         .substring(0, 50);
     }
 
     // Fallback to filename
     return document.filename
-      .replace(/\.[^/.]+$/, '') // Remove extension
-      .replace(/[^a-zA-Z0-9]/g, '_')
+      .replace(/\.[^/.]+$/, "") // Remove extension
+      .replace(/[^a-zA-Z0-9]/g, "_")
       .substring(0, 50);
   },
 
@@ -219,16 +222,25 @@ export const templateService = {
    */
   inferFieldType(label) {
     const lower = label.toLowerCase();
-    
-    if (lower.includes('date')) return 'date';
-    if (lower.includes('amount') || lower.includes('total') || 
-        lower.includes('price') || lower.includes('cost')) return 'currency';
-    if (lower.includes('number') || lower.includes('id') || 
-        lower.includes('code')) return 'number';
-    if (lower.includes('email')) return 'email';
-    if (lower.includes('phone') || lower.includes('tel')) return 'phone';
-    
-    return 'text';
+
+    if (lower.includes("date")) return "date";
+    if (
+      lower.includes("amount") ||
+      lower.includes("total") ||
+      lower.includes("price") ||
+      lower.includes("cost")
+    )
+      return "currency";
+    if (
+      lower.includes("number") ||
+      lower.includes("id") ||
+      lower.includes("code")
+    )
+      return "number";
+    if (lower.includes("email")) return "email";
+    if (lower.includes("phone") || lower.includes("tel")) return "phone";
+
+    return "text";
   },
 
   /**
@@ -237,10 +249,10 @@ export const templateService = {
   exportTemplates() {
     const templates = this.getAllTemplates();
     const blob = new Blob([JSON.stringify(templates, null, 2)], {
-      type: 'application/json'
+      type: "application/json",
     });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `schemaxtract_templates_${Date.now()}.json`;
     a.click();
@@ -259,7 +271,9 @@ export const templateService = {
           const existing = this.getAllTemplates();
           const merged = { ...existing, ...imported };
           localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
-          console.log(`[Template] Imported ${Object.keys(imported).length} templates`);
+          console.log(
+            `[Template] Imported ${Object.keys(imported).length} templates`
+          );
           resolve(Object.keys(imported).length);
         } catch (error) {
           reject(error);
@@ -282,17 +296,16 @@ export const templateService = {
         acc[vendor] = (acc[vendor] || 0) + 1;
         return acc;
       }, {}),
-      avgFieldsPerTemplate: templates.length > 0
-        ? templates.reduce((sum, t) => sum + t.fields.length, 0) / templates.length
-        : 0,
-      oldestTemplate: templates.length > 0
-        ? templates[templates.length - 1].createdAt
-        : null,
-      newestTemplate: templates.length > 0
-        ? templates[0].createdAt
-        : null
+      avgFieldsPerTemplate:
+        templates.length > 0
+          ? templates.reduce((sum, t) => sum + t.fields.length, 0) /
+            templates.length
+          : 0,
+      oldestTemplate:
+        templates.length > 0 ? templates[templates.length - 1].createdAt : null,
+      newestTemplate: templates.length > 0 ? templates[0].createdAt : null,
     };
-  }
+  },
 };
 
 export default templateService;

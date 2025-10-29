@@ -43,12 +43,18 @@ function App() {
     // Extract metadata from fields
     const metadata = {
       invoice_id:
-        data.fields?.find((f) => f.field_name === "invoice_number" || f.label === "invoice_number")?.value ||
-        null,
+        data.fields?.find(
+          (f) =>
+            f.field_name === "invoice_number" || f.label === "invoice_number"
+        )?.value || null,
       issue_date:
-        data.fields?.find((f) => f.field_name === "invoice_date" || f.label === "invoice_date")?.value ||
-        null,
-      total: data.fields?.find((f) => f.field_name === "total" || f.label === "total_amount")?.value || null,
+        data.fields?.find(
+          (f) => f.field_name === "invoice_date" || f.label === "invoice_date"
+        )?.value || null,
+      total:
+        data.fields?.find(
+          (f) => f.field_name === "total" || f.label === "total_amount"
+        )?.value || null,
       num_fields: data.fields?.length || 0,
     };
 
@@ -90,7 +96,11 @@ function App() {
             uploadedAt: new Date().toISOString(),
             labels: [],
           };
-          console.log("[App] Creating new document (batch in progress):", newDocument.id, newDocument.status);
+          console.log(
+            "[App] Creating new document (batch in progress):",
+            newDocument.id,
+            newDocument.status
+          );
           return [newDocument, ...prev];
         }
       });
@@ -130,7 +140,11 @@ function App() {
             uploadedAt: new Date().toISOString(),
             labels: [],
           };
-          console.log("[App] Creating new document (final):", newDocument.id, newDocument.status);
+          console.log(
+            "[App] Creating new document (final):",
+            newDocument.id,
+            newDocument.status
+          );
           console.log("[App] Document count will be:", prev.length + 1);
           return [newDocument, ...prev];
         }

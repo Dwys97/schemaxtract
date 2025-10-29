@@ -19,8 +19,9 @@ bbox_match = match_value_to_ocr_bbox(answer, ocr_words, img_width, img_height)
 **This is why bboxes don't fit well!**
 
 LayoutLM uses its own internal OCR (LayoutLMv2/v3 has built-in OCR), but you're running Tesseract separately and trying to match the strings. The two OCR engines might:
+
 - Recognize words differently
-- Split text differently  
+- Split text differently
 - Have different confidence levels
 - Return slightly different bboxes
 
@@ -35,7 +36,7 @@ Rossum uses LayoutLM's **native word-level outputs**:
 # 3. Returns answer WITH the word indices
 
 result = doc_qa(
-    image=image, 
+    image=image,
     question="What is the vendor name?",
     return_dict_in_generate=True,  # Get detailed output
     output_attentions=True          # Get attention weights
@@ -77,8 +78,8 @@ image = Image.open(image_path).convert("RGB")
 question = "What is the vendor name?"
 
 encoding = processor(
-    image, 
-    question, 
+    image,
+    question,
     return_tensors="pt",
     return_offsets_mapping=True  # Maps tokens to character positions
 )
@@ -113,12 +114,14 @@ merged_bbox = {
 ## Why This Matters
 
 ### Current Approach (Inaccurate):
+
 1. LayoutLM runs OCR internally → "Wilkinson Sword GmbH"
 2. You run Tesseract separately → "Wilkinson-Sword GmbH" (hyphen!)
 3. String matching fails or returns wrong bbox
 4. Bbox doesn't fit the actual text
 
 ### Correct Approach (Like Rossum):
+
 1. LayoutLM runs OCR internally → gets words + bboxes
 2. LayoutLM finds answer in its own OCR words
 3. Return the SAME bboxes LayoutLM used
@@ -127,6 +130,7 @@ merged_bbox = {
 ## Implementation Priority
 
 ### Option 1: Use LayoutLM Processor Directly (Best Quality)
+
 ```python
 # Use processor instead of pipeline
 processor = LayoutLMv2Processor.from_pretrained("impira/layoutlm-invoices")
@@ -137,17 +141,20 @@ encoding = processor(image, question, return_tensors="pt")
 # encoding['bbox'] contains LayoutLM's OCR bboxes
 ```
 
-**Pros:** 
+**Pros:**
+
 - Perfect bbox alignment
 - No separate OCR needed
 - Faster (one OCR pass instead of two)
 - Same quality as Rossum
 
 **Cons:**
+
 - Need to refactor from pipeline to processor/model
 - More code to handle tokenization
 
 ### Option 2: Improve OCR Matching (Quick Fix)
+
 Keep current architecture but improve the matching:
 
 ```python
@@ -159,21 +166,21 @@ def match_value_to_ocr_bbox_improved(value, ocr_words, img_width, img_height):
     - Character-level alignment
     """
     from difflib import SequenceMatcher
-    
+
     value_clean = value.lower().strip()
     best_match = None
     best_ratio = 0
-    
+
     # Try to find contiguous sequence of OCR words
     for i in range(len(ocr_words)):
         for j in range(i+1, min(i+10, len(ocr_words)+1)):
             ocr_sequence = " ".join(w["text"] for w in ocr_words[i:j])
             ratio = SequenceMatcher(None, value_clean, ocr_sequence.lower()).ratio()
-            
+
             if ratio > best_ratio and ratio > 0.7:  # 70% similarity threshold
                 best_ratio = ratio
                 best_match = ocr_words[i:j]
-    
+
     if best_match:
         # Merge bboxes of best matching sequence
         x1 = min(w["bbox"][0] for w in best_match)
@@ -181,18 +188,20 @@ def match_value_to_ocr_bbox_improved(value, ocr_words, img_width, img_height):
         x2 = max(w["bbox"][2] for w in best_match)
         y2 = max(w["bbox"][3] for w in best_match)
         avg_conf = sum(w["confidence"] for w in best_match) / len(best_match)
-        
+
         return {"bbox": [x1, y1, x2, y2], "confidence": avg_conf}
-    
+
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 ```
 
 **Pros:**
+
 - Quick to implement
 - Works with current architecture
 - Better than current matching
 
 **Cons:**
+
 - Still not as accurate as using LayoutLM's native bboxes
 - Two OCR passes = slower
 
@@ -202,7 +211,7 @@ The `pipeline` API might expose word_ids:
 
 ```python
 result = doc_qa(
-    image=image, 
+    image=image,
     question=question,
     top_k=1,
     handle_impossible_answer=False
@@ -220,8 +229,9 @@ if 'word_ids' in result or hasattr(result, 'word_ids'):
 **Implement Option 1** (use LayoutLM processor directly) for production quality matching Rossum.
 
 This requires refactoring `extract_invoice_fields_layoutlm` to:
+
 1. Use `LayoutLMv2Processor` instead of `pipeline`
-2. Extract bboxes from `encoding['bbox']` 
+2. Extract bboxes from `encoding['bbox']`
 3. Map answer tokens to bbox coordinates
 4. Remove separate Tesseract OCR call
 

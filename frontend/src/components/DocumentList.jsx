@@ -71,14 +71,19 @@ function DocumentList({
   const handleSaveAsTemplate = (doc) => {
     try {
       const templateName = prompt(
-        'Enter template name (or leave blank to auto-generate):',
+        "Enter template name (or leave blank to auto-generate):",
         templateService.suggestTemplateName(doc)
       );
-      
+
       if (templateName === null) return; // User cancelled
-      
-      const template = templateService.saveAsTemplate(doc, templateName || undefined);
-      alert(`✓ Template saved: ${template.name}\n\nThis document will now be used as a reference for similar invoices.`);
+
+      const template = templateService.saveAsTemplate(
+        doc,
+        templateName || undefined
+      );
+      alert(
+        `✓ Template saved: ${template.name}\n\nThis document will now be used as a reference for similar invoices.`
+      );
     } catch (error) {
       console.error("Save template failed:", error);
       alert(`Failed to save template: ${error.message}`);

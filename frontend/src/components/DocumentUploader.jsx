@@ -149,7 +149,9 @@ function DocumentUploader({ onDocumentProcessed }) {
 
       // STEP 1: Get OCR + default field extraction first
       // This runs OCR and extracts priority fields (vendor, invoice_number, etc.)
-      console.log("[Upload] Step 1: Running OCR and extracting priority fields...");
+      console.log(
+        "[Upload] Step 1: Running OCR and extracting priority fields..."
+      );
       const ocrResponse = await axios.post("/api/process-document", {
         document: base64Data,
         filename: selectedFile.name,
@@ -161,15 +163,19 @@ function DocumentUploader({ onDocumentProcessed }) {
 
       // STEP 1.5: Find matching templates using extracted fields
       console.log("[Upload] Step 1.5: Looking for matching templates...");
-      
+
       const extractedFields = ocrResponse.data?.fields || [];
-      console.log(`[Upload] Extracted ${extractedFields.length} priority fields from OCR`);
-      
+      console.log(
+        `[Upload] Extracted ${extractedFields.length} priority fields from OCR`
+      );
+
       if (extractedFields.length > 0) {
-        console.log("[Upload] Fields available for template matching:", 
-          extractedFields.map(f => `${f.label}="${f.value}"`).join(", "));
+        console.log(
+          "[Upload] Fields available for template matching:",
+          extractedFields.map((f) => `${f.label}="${f.value}"`).join(", ")
+        );
       }
-      
+
       // Use the actual extracted fields (with values!) for template matching
       const matchingTemplates = templateService.findMatchingTemplates(
         extractedFields,
@@ -179,25 +185,37 @@ function DocumentUploader({ onDocumentProcessed }) {
       let templateHints = null;
       if (matchingTemplates.length > 0) {
         const bestTemplate = matchingTemplates[0].template;
-        console.log(`[Upload] ✅ Found matching template: "${bestTemplate.name}" (score: ${matchingTemplates[0].score.toFixed(2)})`);
-        console.log(`[Upload] Matched on ${matchingTemplates[0].matchedFields} common fields`);
-        console.log(`[Upload] Template has ${bestTemplate.fields.length} fields with bbox hints`);
-        
+        console.log(
+          `[Upload] ✅ Found matching template: "${
+            bestTemplate.name
+          }" (score: ${matchingTemplates[0].score.toFixed(2)})`
+        );
+        console.log(
+          `[Upload] Matched on ${matchingTemplates[0].matchedFields} common fields`
+        );
+        console.log(
+          `[Upload] Template has ${bestTemplate.fields.length} fields with bbox hints`
+        );
+
         // Convert template to hints format for backend
         templateHints = {
           template_id: bestTemplate.id,
           template_name: bestTemplate.name,
-          field_hints: bestTemplate.fields.map(f => ({
+          field_hints: bestTemplate.fields.map((f) => ({
             field_key: f.label,
             bbox: f.bbox,
             typical_value: f.value,
-            confidence: f.confidence
-          }))
+            confidence: f.confidence,
+          })),
         };
-        console.log(`[Upload] Template hints prepared with ${templateHints.field_hints.length} bbox hints`);
+        console.log(
+          `[Upload] Template hints prepared with ${templateHints.field_hints.length} bbox hints`
+        );
       } else {
         console.log("[Upload] ❌ No matching templates found");
-        console.log("[Upload] 💡 Tip: After confirming this extraction, save it as a template for future use!");
+        console.log(
+          "[Upload] 💡 Tip: After confirming this extraction, save it as a template for future use!"
+        );
       }
 
       // Prepare document data with base64
@@ -340,7 +358,7 @@ function DocumentUploader({ onDocumentProcessed }) {
         setLoading(false);
       };
 
-            // Start batch extraction (5 at a time, 500ms delays)
+      // Start batch extraction (5 at a time, 500ms delays)
       await batchAnnotationService.extractInBatches(
         base64Data,
         selectedFile.type.includes("pdf") ? "pdf" : "png",
@@ -348,7 +366,7 @@ function DocumentUploader({ onDocumentProcessed }) {
         {
           batchSize: 5,
           delayMs: 500,
-          templateHints: templateHints // Pass template hints to backend
+          templateHints: templateHints, // Pass template hints to backend
         }
       );
     } catch (err) {

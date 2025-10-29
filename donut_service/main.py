@@ -48,14 +48,18 @@ CORS(
     },
 )
 
+
 # Add additional CORS headers for all responses
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Max-Age', '3600')
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add(
+        "Access-Control-Allow-Headers", "Content-Type,Authorization,Accept"
+    )
+    response.headers.add("Access-Control-Allow-Methods", "GET,PUT,POST,DELETE,OPTIONS")
+    response.headers.add("Access-Control-Max-Age", "3600")
     return response
+
 
 # Global model variables (lazy loaded)
 _doc_qa_pipeline = None
@@ -138,17 +142,23 @@ def load_layoutlm_processor_and_model():
     This gives us access to the internal OCR bboxes that the model uses.
     """
     global _layoutlm_processor, _layoutlm_model
-    
+
     if _layoutlm_processor is None or _layoutlm_model is None:
-        logger.info("Loading LayoutLM processor and model for native bbox extraction...")
+        logger.info(
+            "Loading LayoutLM processor and model for native bbox extraction..."
+        )
         try:
-            _layoutlm_processor = LayoutLMv2Processor.from_pretrained("impira/layoutlm-invoices")
-            _layoutlm_model = LayoutLMv2ForQuestionAnswering.from_pretrained("impira/layoutlm-invoices")
+            _layoutlm_processor = LayoutLMv2Processor.from_pretrained(
+                "impira/layoutlm-invoices"
+            )
+            _layoutlm_model = LayoutLMv2ForQuestionAnswering.from_pretrained(
+                "impira/layoutlm-invoices"
+            )
             logger.info("✓ LayoutLM processor and model loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load LayoutLM processor/model: {e}")
             raise
-    
+
     return _layoutlm_processor, _layoutlm_model
 
 
@@ -202,19 +212,21 @@ def perform_ocr_get_words(image_path: str) -> list:
         return []
 
 
-def extract_answer_with_native_bbox(image: Image.Image, question: str, processor, model) -> dict:
+def extract_answer_with_native_bbox(
+    image: Image.Image, question: str, processor, model
+) -> dict:
     """
     Extract answer using LayoutLM with NATIVE bboxes from the model's internal OCR.
-    
+
     This is the key to matching Rossum's accuracy - we use the same OCR bboxes
     that LayoutLM used internally, rather than running separate Tesseract OCR.
-    
+
     Args:
         image: PIL Image
         question: Question to ask (e.g., "What is the vendor name?")
         processor: LayoutLM processor
         model: LayoutLM model
-        
+
     Returns:
         {
             'answer': str,
@@ -226,40 +238,38 @@ def extract_answer_with_native_bbox(image: Image.Image, question: str, processor
         # Encode image + question using LayoutLM's processor
         # This runs OCR internally and tokenizes
         encoding = processor(
-            image,
-            question,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True
+            image, question, return_tensors="pt", padding="max_length", truncation=True
         )
-        
+
         # Run model to get answer span
         with torch.no_grad():
             outputs = model(**encoding)
-        
+
         # Get start and end positions of answer
         start_idx = torch.argmax(outputs.start_logits)
         end_idx = torch.argmax(outputs.end_logits)
-        
+
         # Get confidence scores
         start_score = torch.max(torch.softmax(outputs.start_logits, dim=1)).item()
         end_score = torch.max(torch.softmax(outputs.end_logits, dim=1)).item()
         confidence = (start_score + end_score) / 2
-        
+
         # Decode answer text
-        answer_tokens = encoding['input_ids'][0][start_idx:end_idx+1]
-        answer_text = processor.tokenizer.decode(answer_tokens, skip_special_tokens=True)
-        
+        answer_tokens = encoding["input_ids"][0][start_idx : end_idx + 1]
+        answer_text = processor.tokenizer.decode(
+            answer_tokens, skip_special_tokens=True
+        )
+
         # Extract bboxes from LayoutLM's internal OCR
         # encoding['bbox'] contains bboxes for each token (from LayoutLM's OCR!)
-        answer_bboxes = encoding['bbox'][0][start_idx:end_idx+1]
-        
+        answer_bboxes = encoding["bbox"][0][start_idx : end_idx + 1]
+
         # Convert tensor to list and merge bboxes
         answer_bboxes = answer_bboxes.tolist()
-        
+
         # Get image dimensions for bbox conversion
         img_width, img_height = image.size
-        
+
         if len(answer_bboxes) > 0:
             # Merge all bboxes for multi-word answers
             # LayoutLM processor normalizes bboxes to 0-1000 scale internally
@@ -268,33 +278,31 @@ def extract_answer_with_native_bbox(image: Image.Image, question: str, processor
             y1 = min(box[1] for box in answer_bboxes if box[1] > 0)
             x2 = max(box[2] for box in answer_bboxes if box[2] > 0)
             y2 = max(box[3] for box in answer_bboxes if box[3] > 0)
-            
+
             # Convert from LayoutLM's 0-1000 normalized scale to pixel coordinates
             # so it matches the rest of the pipeline
             x1_px = int((x1 / 1000.0) * img_width)
             y1_px = int((y1 / 1000.0) * img_height)
             x2_px = int((x2 / 1000.0) * img_width)
             y2_px = int((y2 / 1000.0) * img_height)
-            
+
             merged_bbox = [x1_px, y1_px, x2_px, y2_px]
-            
-            logger.debug(f"Native bbox extraction: normalized [{x1},{y1},{x2},{y2}] → pixels {merged_bbox}")
+
+            logger.debug(
+                f"Native bbox extraction: normalized [{x1},{y1},{x2},{y2}] → pixels {merged_bbox}"
+            )
         else:
             merged_bbox = [0, 0, 100, 100]
-        
+
         return {
-            'answer': answer_text.strip(),
-            'bbox': merged_bbox,  # In pixel coordinates to match OCR pipeline
-            'confidence': confidence
+            "answer": answer_text.strip(),
+            "bbox": merged_bbox,  # In pixel coordinates to match OCR pipeline
+            "confidence": confidence,
         }
-        
+
     except Exception as e:
         logger.error(f"Native bbox extraction failed: {e}", exc_info=True)
-        return {
-            'answer': '',
-            'bbox': [0, 0, 100, 100],
-            'confidence': 0.0
-        }
+        return {"answer": "", "bbox": [0, 0, 100, 100], "confidence": 0.0}
 
 
 def extract_invoice_fields_ocr_only(ocr_words: list) -> list:
@@ -507,11 +515,11 @@ def match_value_to_ocr_bbox_improved(
 ) -> dict:
     """
     IMPROVED bbox matching with fuzzy string matching for better accuracy.
-    
+
     Uses sequence matching to find the best contiguous sequence of OCR words
     that match the extracted value, even if OCR and LayoutLM slightly disagree
     on word boundaries.
-    
+
     Returns:
         {'bbox': [x1, y1, x2, y2], 'confidence': float}
     """
@@ -521,29 +529,29 @@ def match_value_to_ocr_bbox_improved(
     value_clean = value.lower().strip()
     best_match = None
     best_ratio = 0
-    
+
     # Try exact match first (fastest)
     for word in ocr_words:
         if word["text"].lower() == value_clean:
             return {"bbox": word["bbox"], "confidence": word["confidence"]}
-    
+
     # Try to find contiguous sequence of OCR words that best matches the value
     # This handles multi-word answers and slight OCR differences
     for i in range(len(ocr_words)):
         # Try sequences of 1 to 10 words starting at position i
-        for j in range(i+1, min(i+11, len(ocr_words)+1)):
+        for j in range(i + 1, min(i + 11, len(ocr_words) + 1)):
             # Build candidate string from OCR words[i:j]
             candidate_words = ocr_words[i:j]
             candidate_text = " ".join(w["text"] for w in candidate_words).lower()
-            
+
             # Calculate similarity ratio using SequenceMatcher
             ratio = SequenceMatcher(None, value_clean, candidate_text).ratio()
-            
+
             # Keep track of best match
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_match = candidate_words
-    
+
     # If we found a good match (>70% similarity), use it
     if best_match and best_ratio > 0.7:
         # Merge bboxes of all matched words
@@ -552,22 +560,27 @@ def match_value_to_ocr_bbox_improved(
         x2 = max(w["bbox"][2] for w in best_match)
         y2 = max(w["bbox"][3] for w in best_match)
         avg_conf = sum(w["confidence"] for w in best_match) / len(best_match)
-        
-        logger.debug(f"Matched '{value}' to OCR with {best_ratio:.2f} similarity: {' '.join(w['text'] for w in best_match)}")
+
+        logger.debug(
+            f"Matched '{value}' to OCR with {best_ratio:.2f} similarity: {' '.join(w['text'] for w in best_match)}"
+        )
         return {"bbox": [x1, y1, x2, y2], "confidence": avg_conf}
-    
+
     # Fallback: try simple substring matching
     for word in ocr_words:
         if value_clean in word["text"].lower() or word["text"].lower() in value_clean:
             return {"bbox": word["bbox"], "confidence": word["confidence"]}
-    
+
     # No match found
     logger.warning(f"Could not find OCR bbox for value: '{value}'")
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
 def extract_invoice_fields_layoutlm(
-    image_path: str, custom_fields: list = None, start_field_id: int = 1, template_hints: dict = None
+    image_path: str,
+    custom_fields: list = None,
+    start_field_id: int = 1,
+    template_hints: dict = None,
 ) -> List[dict]:
     """
     Extract invoice fields using Impira's LayoutLM document Q&A model.
@@ -602,12 +615,16 @@ def extract_invoice_fields_layoutlm(
         # Build template hints lookup for quick access
         template_hint_map = {}
         if template_hints and template_hints.get("field_hints"):
-            logger.info(f"Using template hints from: {template_hints.get('template_name', 'unknown')}")
+            logger.info(
+                f"Using template hints from: {template_hints.get('template_name', 'unknown')}"
+            )
             for hint in template_hints["field_hints"]:
                 field_key = hint.get("field_key")
                 if field_key:
                     template_hint_map[field_key] = hint
-                    logger.info(f"  Template hint for {field_key}: bbox={hint.get('bbox')}, confidence={hint.get('confidence', 0):.2f}")
+                    logger.info(
+                        f"  Template hint for {field_key}: bbox={hint.get('bbox')}, confidence={hint.get('confidence', 0):.2f}"
+                    )
         else:
             logger.info("No template hints available for this extraction")
 
@@ -745,17 +762,24 @@ def extract_invoice_fields_layoutlm(
 
                             # Apply template hint if available and LayoutLM confidence is low
                             template_applied = False
-                            if field_label in template_hint_map and final_confidence < 0.7:
+                            if (
+                                field_label in template_hint_map
+                                and final_confidence < 0.7
+                            ):
                                 hint = template_hint_map[field_label]
                                 hint_bbox = hint.get("bbox")
                                 hint_confidence = hint.get("confidence", 0.0)
-                                
+
                                 # Use template bbox if hint has higher confidence
                                 if hint_bbox and hint_confidence > final_confidence:
                                     bbox = hint_bbox
-                                    final_confidence = min(hint_confidence, 0.85)  # Cap template confidence
+                                    final_confidence = min(
+                                        hint_confidence, 0.85
+                                    )  # Cap template confidence
                                     template_applied = True
-                                    logger.info(f"  ⭐ Applied template hint for {field_label}: bbox={bbox}, conf={final_confidence:.2f}")
+                                    logger.info(
+                                        f"  ⭐ Applied template hint for {field_label}: bbox={bbox}, conf={final_confidence:.2f}"
+                                    )
 
                             # For line items, add row index to label
                             label = (
@@ -771,7 +795,8 @@ def extract_invoice_fields_layoutlm(
                                     "value": answer,
                                     "bbox": bbox,
                                     "confidence": float(final_confidence),
-                                    "source": "layoutlm_qa" + ("_with_template" if template_applied else ""),
+                                    "source": "layoutlm_qa"
+                                    + ("_with_template" if template_applied else ""),
                                     "is_line_item": is_line_item,
                                     "row_index": idx + 1 if is_line_item else None,
                                 }
@@ -877,11 +902,14 @@ def merge_line_words(words: list) -> dict:
 
 
 def extract_fields_with_donut(
-    image_path: str, custom_fields: list = None, start_field_id: int = 1, template_hints: dict = None
+    image_path: str,
+    custom_fields: list = None,
+    start_field_id: int = 1,
+    template_hints: dict = None,
 ) -> Dict[str, Any]:
     """
     Extract invoice fields using Impira LayoutLM Document Q&A model.
-    
+
     Args:
         image_path: Path to image file
         custom_fields: List of field definitions with questions
@@ -916,30 +944,22 @@ def extract_fields_with_donut(
         )
         logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
 
-        # Check if bboxes are already normalized (from native extraction)
-        # Native bbox extraction returns 0-1000 scale already
-        # Only normalize if bboxes are in pixel coordinates (legacy OCR matching)
-        needs_normalization = False
-        if layoutlm_fields:
-            sample_bbox = layoutlm_fields[0].get("bbox", [0, 0, 0, 0])
-            # If any coordinate > 1000, it's in pixel space and needs normalization
-            if any(coord > 1000 for coord in sample_bbox):
-                needs_normalization = True
-                logger.info("Bboxes in pixel coordinates - normalizing to 0-1000 scale")
-            else:
-                logger.info("Bboxes already in 0-1000 normalized scale (native extraction)")
-
-        if needs_normalization:
-            # Normalize pixel coordinates to 0-1000 scale
-            for field in layoutlm_fields:
-                if "bbox" in field and field["bbox"]:
-                    x1, y1, x2, y2 = field["bbox"]
+        # Normalize bboxes to 0-1000 scale if needed
+        # Check EACH field individually since different fields might be in different scales
+        for field in layoutlm_fields:
+            if "bbox" in field and field["bbox"]:
+                bbox = field["bbox"]
+                # If any coordinate > 1, it's in pixel space and needs normalization
+                # (normalized coords are always in [0, 1000] range)
+                if any(coord > 1 for coord in bbox):
+                    x1, y1, x2, y2 = bbox
                     field["bbox"] = [
                         int(1000 * x1 / image_width),
                         int(1000 * y1 / image_height),
                         int(1000 * x2 / image_width),
                         int(1000 * y2 / image_height),
                     ]
+                    logger.info(f"Normalized {field['label']} bbox from pixels [{x1},{y1},{x2},{y2}] to 0-1000 scale {field['bbox']}")
 
         return {
             "raw_output": {
@@ -1284,9 +1304,11 @@ def extract_document_batch():
         logger.info(
             f"[/extract-batch] Processing batch {batch_index} with {len(custom_fields)} total fields"
         )
-        
+
         if template_hints:
-            logger.info(f"[/extract-batch] Using template '{template_hints.get('template_name')}' with {len(template_hints.get('field_hints', []))} bbox hints")
+            logger.info(
+                f"[/extract-batch] Using template '{template_hints.get('template_name')}' with {len(template_hints.get('field_hints', []))} bbox hints"
+            )
 
         # Sort fields by priority: required fields first
         priority_fields = [f for f in custom_fields if f.get("required", False)]
@@ -1349,10 +1371,10 @@ def extract_document_batch():
             logger.info(f"[/extract-batch] Starting field IDs from {start_field_id}")
 
             result = extract_fields_with_donut(
-                tmp_path, 
-                batch_fields, 
+                tmp_path,
+                batch_fields,
                 start_field_id,
-                template_hints=template_hints  # Pass template hints for few-shot learning
+                template_hints=template_hints,  # Pass template hints for few-shot learning
             )
 
             logger.info(
