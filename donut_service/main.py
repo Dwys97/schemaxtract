@@ -20,7 +20,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 from pdf2image import convert_from_path
-from transformers import pipeline
+from transformers import pipeline, LayoutLMv2Processor, LayoutLMv2ForQuestionAnswering
 import torch
 import pytesseract
 
@@ -59,6 +59,8 @@ def after_request(response):
 
 # Global model variables (lazy loaded)
 _doc_qa_pipeline = None
+_layoutlm_processor = None
+_layoutlm_model = None
 
 # Template storage directory
 TEMPLATE_DIR = Path("/tmp/invoice_templates")
@@ -130,6 +132,26 @@ def load_layoutlm_model():
     return _doc_qa_pipeline
 
 
+def load_layoutlm_processor_and_model():
+    """
+    Load LayoutLM processor and model directly for bbox extraction.
+    This gives us access to the internal OCR bboxes that the model uses.
+    """
+    global _layoutlm_processor, _layoutlm_model
+    
+    if _layoutlm_processor is None or _layoutlm_model is None:
+        logger.info("Loading LayoutLM processor and model for native bbox extraction...")
+        try:
+            _layoutlm_processor = LayoutLMv2Processor.from_pretrained("impira/layoutlm-invoices")
+            _layoutlm_model = LayoutLMv2ForQuestionAnswering.from_pretrained("impira/layoutlm-invoices")
+            logger.info("✓ LayoutLM processor and model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load LayoutLM processor/model: {e}")
+            raise
+    
+    return _layoutlm_processor, _layoutlm_model
+
+
 def perform_ocr_get_words(image_path: str) -> list:
     """
     Run Tesseract OCR to extract words with bounding boxes and confidences.
@@ -178,6 +200,101 @@ def perform_ocr_get_words(image_path: str) -> list:
     except Exception as e:
         logger.error(f"OCR failed: {e}", exc_info=True)
         return []
+
+
+def extract_answer_with_native_bbox(image: Image.Image, question: str, processor, model) -> dict:
+    """
+    Extract answer using LayoutLM with NATIVE bboxes from the model's internal OCR.
+    
+    This is the key to matching Rossum's accuracy - we use the same OCR bboxes
+    that LayoutLM used internally, rather than running separate Tesseract OCR.
+    
+    Args:
+        image: PIL Image
+        question: Question to ask (e.g., "What is the vendor name?")
+        processor: LayoutLM processor
+        model: LayoutLM model
+        
+    Returns:
+        {
+            'answer': str,
+            'bbox': [x1, y1, x2, y2],  # From LayoutLM's internal OCR
+            'confidence': float
+        }
+    """
+    try:
+        # Encode image + question using LayoutLM's processor
+        # This runs OCR internally and tokenizes
+        encoding = processor(
+            image,
+            question,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True
+        )
+        
+        # Run model to get answer span
+        with torch.no_grad():
+            outputs = model(**encoding)
+        
+        # Get start and end positions of answer
+        start_idx = torch.argmax(outputs.start_logits)
+        end_idx = torch.argmax(outputs.end_logits)
+        
+        # Get confidence scores
+        start_score = torch.max(torch.softmax(outputs.start_logits, dim=1)).item()
+        end_score = torch.max(torch.softmax(outputs.end_logits, dim=1)).item()
+        confidence = (start_score + end_score) / 2
+        
+        # Decode answer text
+        answer_tokens = encoding['input_ids'][0][start_idx:end_idx+1]
+        answer_text = processor.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+        
+        # Extract bboxes from LayoutLM's internal OCR
+        # encoding['bbox'] contains bboxes for each token (from LayoutLM's OCR!)
+        answer_bboxes = encoding['bbox'][0][start_idx:end_idx+1]
+        
+        # Convert tensor to list and merge bboxes
+        answer_bboxes = answer_bboxes.tolist()
+        
+        # Get image dimensions for bbox conversion
+        img_width, img_height = image.size
+        
+        if len(answer_bboxes) > 0:
+            # Merge all bboxes for multi-word answers
+            # LayoutLM processor normalizes bboxes to 0-1000 scale internally
+            # But we need pixel coordinates for consistency with the rest of the system
+            x1 = min(box[0] for box in answer_bboxes if box[0] > 0)
+            y1 = min(box[1] for box in answer_bboxes if box[1] > 0)
+            x2 = max(box[2] for box in answer_bboxes if box[2] > 0)
+            y2 = max(box[3] for box in answer_bboxes if box[3] > 0)
+            
+            # Convert from LayoutLM's 0-1000 normalized scale to pixel coordinates
+            # so it matches the rest of the pipeline
+            x1_px = int((x1 / 1000.0) * img_width)
+            y1_px = int((y1 / 1000.0) * img_height)
+            x2_px = int((x2 / 1000.0) * img_width)
+            y2_px = int((y2 / 1000.0) * img_height)
+            
+            merged_bbox = [x1_px, y1_px, x2_px, y2_px]
+            
+            logger.debug(f"Native bbox extraction: normalized [{x1},{y1},{x2},{y2}] → pixels {merged_bbox}")
+        else:
+            merged_bbox = [0, 0, 100, 100]
+        
+        return {
+            'answer': answer_text.strip(),
+            'bbox': merged_bbox,  # In pixel coordinates to match OCR pipeline
+            'confidence': confidence
+        }
+        
+    except Exception as e:
+        logger.error(f"Native bbox extraction failed: {e}", exc_info=True)
+        return {
+            'answer': '',
+            'bbox': [0, 0, 100, 100],
+            'confidence': 0.0
+        }
 
 
 def extract_invoice_fields_ocr_only(ocr_words: list) -> list:
@@ -385,6 +502,70 @@ def match_value_to_ocr_bbox(
     return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
 
 
+def match_value_to_ocr_bbox_improved(
+    value: str, ocr_words: list, img_width: int, img_height: int
+) -> dict:
+    """
+    IMPROVED bbox matching with fuzzy string matching for better accuracy.
+    
+    Uses sequence matching to find the best contiguous sequence of OCR words
+    that match the extracted value, even if OCR and LayoutLM slightly disagree
+    on word boundaries.
+    
+    Returns:
+        {'bbox': [x1, y1, x2, y2], 'confidence': float}
+    """
+    if not value or not ocr_words:
+        return {"bbox": [0, 0, 100, 100], "confidence": 0.5}
+
+    value_clean = value.lower().strip()
+    best_match = None
+    best_ratio = 0
+    
+    # Try exact match first (fastest)
+    for word in ocr_words:
+        if word["text"].lower() == value_clean:
+            return {"bbox": word["bbox"], "confidence": word["confidence"]}
+    
+    # Try to find contiguous sequence of OCR words that best matches the value
+    # This handles multi-word answers and slight OCR differences
+    for i in range(len(ocr_words)):
+        # Try sequences of 1 to 10 words starting at position i
+        for j in range(i+1, min(i+11, len(ocr_words)+1)):
+            # Build candidate string from OCR words[i:j]
+            candidate_words = ocr_words[i:j]
+            candidate_text = " ".join(w["text"] for w in candidate_words).lower()
+            
+            # Calculate similarity ratio using SequenceMatcher
+            ratio = SequenceMatcher(None, value_clean, candidate_text).ratio()
+            
+            # Keep track of best match
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_match = candidate_words
+    
+    # If we found a good match (>70% similarity), use it
+    if best_match and best_ratio > 0.7:
+        # Merge bboxes of all matched words
+        x1 = min(w["bbox"][0] for w in best_match)
+        y1 = min(w["bbox"][1] for w in best_match)
+        x2 = max(w["bbox"][2] for w in best_match)
+        y2 = max(w["bbox"][3] for w in best_match)
+        avg_conf = sum(w["confidence"] for w in best_match) / len(best_match)
+        
+        logger.debug(f"Matched '{value}' to OCR with {best_ratio:.2f} similarity: {' '.join(w['text'] for w in best_match)}")
+        return {"bbox": [x1, y1, x2, y2], "confidence": avg_conf}
+    
+    # Fallback: try simple substring matching
+    for word in ocr_words:
+        if value_clean in word["text"].lower() or word["text"].lower() in value_clean:
+            return {"bbox": word["bbox"], "confidence": word["confidence"]}
+    
+    # No match found
+    logger.warning(f"Could not find OCR bbox for value: '{value}'")
+    return {"bbox": [0, 0, 100, 100], "confidence": 0.3}
+
+
 def extract_invoice_fields_layoutlm(
     image_path: str, custom_fields: list = None, start_field_id: int = 1, template_hints: dict = None
 ) -> List[dict]:
@@ -406,7 +587,7 @@ def extract_invoice_fields_layoutlm(
         List of extracted fields with bboxes and confidence scores
     """
     try:
-        # Load model (lazy loading)
+        # Load model (pipeline for impira/layoutlm-invoices)
         doc_qa = load_layoutlm_model()
 
         # Open image
@@ -513,9 +694,8 @@ def extract_invoice_fields_layoutlm(
                 )
                 is_line_item = category == "line_items"
 
-                # For line items, modify question to get multiple instances
+                # For line items, ask for multiple results
                 if is_line_item:
-                    # Try to extract from table rows - ask LayoutLM for top 5 matches
                     logger.info(
                         f"[LINE ITEM] Extracting {field_label} from table rows..."
                     )
@@ -552,8 +732,8 @@ def extract_invoice_fields_layoutlm(
                                     logger.debug(f"Skipping duplicate answer: {answer}")
                                     continue
 
-                            # Match the answer text to OCR words to get bbox
-                            bbox_match = match_value_to_ocr_bbox(
+                            # IMPROVED: Match the answer text to OCR words to get bbox
+                            bbox_match = match_value_to_ocr_bbox_improved(
                                 answer, ocr_words, img_width, img_height
                             )
                             bbox = bbox_match.get("bbox", [0, 0, img_width // 4, 30])
@@ -736,16 +916,30 @@ def extract_fields_with_donut(
         )
         logger.info(f"LayoutLM Q&A extracted {len(layoutlm_fields)} invoice fields")
 
-        # Normalize bboxes to 0-1000 scale (frontend expects this)
-        for field in layoutlm_fields:
-            if "bbox" in field and field["bbox"]:
-                x1, y1, x2, y2 = field["bbox"]
-                field["bbox"] = [
-                    int(1000 * x1 / image_width),
-                    int(1000 * y1 / image_height),
-                    int(1000 * x2 / image_width),
-                    int(1000 * y2 / image_height),
-                ]
+        # Check if bboxes are already normalized (from native extraction)
+        # Native bbox extraction returns 0-1000 scale already
+        # Only normalize if bboxes are in pixel coordinates (legacy OCR matching)
+        needs_normalization = False
+        if layoutlm_fields:
+            sample_bbox = layoutlm_fields[0].get("bbox", [0, 0, 0, 0])
+            # If any coordinate > 1000, it's in pixel space and needs normalization
+            if any(coord > 1000 for coord in sample_bbox):
+                needs_normalization = True
+                logger.info("Bboxes in pixel coordinates - normalizing to 0-1000 scale")
+            else:
+                logger.info("Bboxes already in 0-1000 normalized scale (native extraction)")
+
+        if needs_normalization:
+            # Normalize pixel coordinates to 0-1000 scale
+            for field in layoutlm_fields:
+                if "bbox" in field and field["bbox"]:
+                    x1, y1, x2, y2 = field["bbox"]
+                    field["bbox"] = [
+                        int(1000 * x1 / image_width),
+                        int(1000 * y1 / image_height),
+                        int(1000 * x2 / image_width),
+                        int(1000 * y2 / image_height),
+                    ]
 
         return {
             "raw_output": {
